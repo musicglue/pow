@@ -91,15 +91,16 @@ defmodule Pow.Ecto.Context do
   """
   @spec authenticate(map(), Config.t()) :: user() | nil
   def authenticate(params, config) do
-    user_mod      = Config.user!(config)
+    user_mod = Config.user!(config)
     user_id_field = user_mod.pow_user_id_field()
     user_id_value = params[Atom.to_string(user_id_field)]
-    password      = params["password"]
+    password = params["password"]
 
     do_authenticate(user_id_field, user_id_value, password, config)
   end
 
   defp do_authenticate(_user_id_field, nil, _password, _config), do: nil
+
   defp do_authenticate(user_id_field, user_id_value, password, config) do
     [{user_id_field, user_id_value}]
     |> Operations.get_by(config)
@@ -108,16 +109,18 @@ defmodule Pow.Ecto.Context do
 
   defp verify_password(nil, _password, config) do
     user_mod = Config.user!(config)
-    user     = struct(user_mod, password_hash: nil)
+    user = struct(user_mod, password_hash: nil)
     user_mod.verify_password(user, "")
 
     nil
   end
+
   defp verify_password(_user, nil, _config), do: false
+
   defp verify_password(user, password, _config) do
     case user.__struct__.verify_password(user, password) do
       true -> user
-      _    -> nil
+      _ -> nil
     end
   end
 
@@ -169,8 +172,10 @@ defmodule Pow.Ecto.Context do
   @spec get_by(Keyword.t() | map(), Config.t()) :: user() | nil
   def get_by(clauses, config) do
     user_mod = Config.user!(config)
-    clauses  = normalize_user_id_field_value(user_mod, clauses)
-    opts     = repo_opts(config, [:prefix])
+    clauses = normalize_user_id_field_value(user_mod, clauses)
+    opts = repo_opts(config, [:prefix])
+    scope_clauses = scope_opts(config)
+    clauses = Keyword.merge(clauses, scope_clauses)
 
     Config.repo!(config).get_by(user_mod, clauses, opts)
   end
@@ -179,8 +184,11 @@ defmodule Pow.Ecto.Context do
     user_id_field = user_mod.pow_user_id_field()
 
     Enum.map(clauses, fn
-      {^user_id_field, value} when is_binary(value) -> {user_id_field, Schema.normalize_user_id_field_value(value)}
-      any -> any
+      {^user_id_field, value} when is_binary(value) ->
+        {user_id_field, Schema.normalize_user_id_field_value(value)}
+
+      any ->
+        any
     end)
   end
 
@@ -192,9 +200,12 @@ defmodule Pow.Ecto.Context do
   @spec do_insert(changeset(), Config.t()) :: {:ok, user()} | {:error, changeset()}
   def do_insert(changeset, config) do
     opts = repo_opts(config, [:prefix])
-    repo = Config.repo!(config)
+    scope = scope_opts(config)
 
-    repo.insert(changeset, opts)
+    changeset
+    |> Ecto.Changeset.change(scope)
+    |> Config.repo!(config).insert(opts)
+    |> reload_after_write(config)
   end
 
   @doc """
@@ -205,9 +216,23 @@ defmodule Pow.Ecto.Context do
   @spec do_update(changeset(), Config.t()) :: {:ok, user()} | {:error, changeset()}
   def do_update(changeset, config) do
     opts = repo_opts(config, [:prefix])
-    repo = Config.repo!(config)
+    scope = scope_opts(config)
 
-    repo.update(changeset, opts)
+    changeset
+    |> Ecto.Changeset.change(scope)
+    |> Config.repo!(config).update(opts)
+    |> reload_after_write(config)
+  end
+
+  defp reload_after_write({:error, changeset}, _config), do: {:error, changeset}
+
+  defp reload_after_write({:ok, struct}, config) do
+    # When ecto updates/inserts, has_many :through associations are set to nil.
+    # So we'll just reload when writes happen.
+    opts = repo_opts(config, [:prefix])
+    struct = Config.repo!(config).get!(struct.__struct__, struct.id, opts)
+
+    {:ok, struct}
   end
 
   # TODO: Remove by 1.1.0
@@ -218,6 +243,11 @@ defmodule Pow.Ecto.Context do
     config
     |> Config.get(:repo_opts, [])
     |> Keyword.take(opts)
+  end
+
+  defp scope_opts(config) do
+    config
+    |> Config.get(:scope_opts, [])
   end
 
   # TODO: Remove by 1.1.0
