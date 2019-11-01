@@ -4,7 +4,7 @@ defmodule Pow.Test.Ecto.Users.User do
   use Pow.Ecto.Schema
 
   schema "users" do
-    field :custom, :string
+    field(:custom, :string)
 
     pow_user_fields()
 
