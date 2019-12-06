@@ -53,6 +53,7 @@ defmodule PowResetPassword.Plug do
       params
       |> Map.get("email")
       |> ResetPasswordContext.get_by_email(config)
+    require IEx; IEx.pry
 
     maybe_store_reset_token(conn, user, token, config)
   end
