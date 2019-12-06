@@ -34,6 +34,64 @@ defmodule Pow.Phoenix.Router do
 
         # ...
       end
+
+  ## Disable registration routes
+
+  `pow_routes/0` will call `pow_session_routes/0` and
+  `pow_registration_routes/0`. Registration of new accounts can be disabled
+  just by calling `pow_session_routes/0` instead of `pow_routes/0`:
+
+      defmodule MyAppWeb.Router do
+        use MyAppWeb, :router
+        use Pow.Phoenix.Router
+
+        # ...
+
+        # Uncomment to permit update and deletion of user accounts:
+        # scope "/", Pow.Phoenix, as: "pow" do
+        #   pipe_through :browser
+        #
+        #   resources "/registration", RegistrationController, singleton: true, only: [:edit, :update, :delete]
+        # end
+
+        scope "/" do
+          pipe_through :browser
+
+          pow_session_routes()
+        end
+
+        # ...
+      end
+
+  ## Customize Pow routes
+
+  Pow routes can be overridden by defining them before the `pow_routes/0` call.
+  As an example, this can be used to change path:
+
+      defmodule MyAppWeb.Router do
+        use MyAppWeb, :router
+        use Pow.Phoenix.Router
+
+        # ...
+
+        scope "/", Pow.Phoenix, as: "pow" do
+          pipe_through :browser
+
+          get "/sign_up", RegistrationController, :new
+          post "/sign_up", RegistrationController, :create
+
+          get "/login", SessionController, :new
+          post "/login", SessionController, :create
+        end
+
+        scope "/" do
+          pipe_through :browser
+
+          pow_routes()
+        end
+
+        # ...
+      end
   """
 
   @doc false
@@ -102,9 +160,36 @@ defmodule Pow.Phoenix.Router do
 
   @doc false
   def __filter_resource_actions__(phoenix_routes, line, module, path, controller, options) do
-    resource     = Phoenix.Router.Resource.build(path, controller, options)
-    action_verbs = [index: :get, new: :get, create: :post, show: :get, edit: :get, update: :patch]
-    only         = Enum.reject(resource.actions, &__route_defined__(phoenix_routes, line, module, action_verbs[&1], path, controller, &1, options))
+    resource    = Phoenix.Router.Resource.build(path, controller, options)
+    param       = resource.param
+    action_opts =
+      if resource.singleton do
+        [
+          show:   {:get, path},
+          new:    {:get, path <> "/new"},
+          edit:   {:get, path <> "/edit"},
+          create: {:post, path},
+          delete: {:delete, path},
+          update: {:patch, path}
+        ]
+      else
+        [
+          index:   {:get, path},
+          show:    {:get, path <> "/:" <> param},
+          new:     {:get, path <> "/new"},
+          edit:    {:get, path <> "/:" <> param <> "/edit"},
+          create:  {:post, path},
+          delete:  {:delete, path <> "/:" <> param},
+          update:  {:patch, path <> "/:" <> param}
+        ]
+      end
+
+    only =
+      Enum.reject(resource.actions, fn plug_opts ->
+        {verb, path} = Keyword.fetch!(action_opts, plug_opts)
+
+        __route_defined__(phoenix_routes, line, module, verb, path, controller, plug_opts, options)
+      end)
 
     Keyword.put(options, :only, only)
   end
