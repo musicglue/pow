@@ -14,37 +14,37 @@ defmodule Pow.Plug.Session do
   assigned private `:pow_session_metadata` key in the conn. The value has to be
   a keyword list.
 
+  The session id used in the client is signed using `Pow.Plug.sign_token/4` to
+  prevent timing attacks.
+
   ## Example
 
-      plug Plug.Session,
-        store: :cookie,
-        key: "_my_app_demo_key",
-        signing_salt: "secret"
-
-      plug Pow.Plug.Session,
+      @pow_config [
         repo: MyApp.Repo,
         user: MyApp.User,
         current_user_assigns_key: :current_user,
         session_key: "auth",
-        session_store: {Pow.Store.CredentialsCache,
-                        ttl: :timer.minutes(30),
-                        namespace: "credentials"},
+        credentials_cache_store: {Pow.Store.CredentialsCache,
+                                  ttl: :timer.minutes(30),
+                                  namespace: "credentials"},
         session_ttl_renewal: :timer.minutes(15),
         cache_store_backend: Pow.Store.Backend.EtsCache,
         users_context: Pow.Ecto.Users
+      ]
+
+      # ...
+
+      plug Plug.Session, @session_options
+      plug Pow.Plug.Session, @pow_config
 
   ## Configuration options
 
+    * `:credentials_cache_store` - see `Pow.Plug.Base`.
+
+    * `:cache_store_backend` - see `Pow.Plug.Base`.
+
     * `:session_key` - session key name, defaults to "auth". If `:otp_app` is
       used it'll automatically prepend the key with the `:otp_app` value.
-
-    * `:session_store` - the credentials cache store. This value defaults to
-      `{Pow.Store.CredentialsCache, backend: Pow.Store.Backend.EtsCache}`. The
-      `Pow.Store.Backend.EtsCache` backend store can be changed with the
-      `:cache_store_backend` option.
-
-    * `:cache_store_backend` - the backend cache store. This value defaults to
-      `Pow.Store.Backend.EtsCache`.
 
     * `:session_ttl_renewal` - the ttl in milliseconds to trigger renewal of
       sessions. Defaults to 15 minutes in miliseconds.
@@ -78,11 +78,37 @@ defmodule Pow.Plug.Session do
 
   The method should be called after `Pow.Plug.Session.call/2` has been called
   to ensure that the metadata, if any, has been fetched.
+
+  ## Session expiration
+
+  `Pow.Store.CredentialsCache` will, by default, invalidate any session token
+  30 minutes after it has been generated. To keep sessions alive the
+  `:session_ttl_renewal` option is used to determine when a session token
+  becomes stale and a new session ID has to be generated for the user (deleting
+  the previous one in the process).
+
+  If `:session_ttl_renewal` is set to zero, a new session token will be
+  generated on every request.
+
+  To change the amount of time a session can be alive, both the TTL for
+  `Pow.Store.CredentialsCache` and `:session_ttl_renewal` option should be
+  changed:
+
+      plug Pow.Plug.Session, otp_app: :my_app,
+        session_ttl_renewal: :timer.minutes(1),
+        credentials_cache_store: {Pow.Store.CredentialsCache, ttl: :timer.minutes(15)}
+
+  In the above, a new session token will be generated when a request occurs
+  more than a minute after the current session token was generated. The
+  session is invalidated if there is no request for the next 14 minutes.
+
+  There are no absolute session timeout; sessions can be kept alive
+  indefinitely.
   """
   use Pow.Plug.Base
 
   alias Plug.Conn
-  alias Pow.{Config, Plug, Store.Backend.EtsCache, Store.CredentialsCache, UUID}
+  alias Pow.{Config, Plug, UUID}
 
   @session_key "auth"
   @session_ttl_renewal :timer.minutes(15)
@@ -92,22 +118,30 @@ defmodule Pow.Plug.Session do
 
   This will fetch a session from the credentials cache with the session id
   fetched through `Plug.Conn.get_session/2` session. If the credentials are
-  stale (timestamp is older than the `:session_ttl_renewal` value), the session
-  will be regenerated with `create/3`.
+  stale (timestamp is older than the `:session_ttl_renewal` value), a global
+  lock will be set, and the session will be regenerated with `create/3`.
+  Nothing happens if setting the lock failed.
 
   The metadata of the session will be assigned as a private
   `:pow_session_metadata` key in the conn so it may be used in `create/3`.
+
+  The session id will be decoded and verified with `Pow.Plug.verify_token/4`.
 
   See `do_fetch/2` for more.
   """
   @impl true
   @spec fetch(Conn.t(), Config.t()) :: {Conn.t(), map() | nil}
   def fetch(conn, config) do
-    {store, store_config} = store(config)
-    conn                  = Conn.fetch_session(conn)
-    key                   = Conn.get_session(conn, session_key(config))
+    case client_store_fetch(conn, config) do
+      {nil, conn}        -> {conn, nil}
+      {session_id, conn} -> fetch(conn, session_id, config)
+    end
+  end
 
-    {key, store.get(store_config, key)}
+  defp fetch(conn, session_id, config) do
+    {store, store_config} = store(config)
+
+    {session_id, store.get(store_config, session_id)}
     |> convert_old_session_value()
     |> handle_fetched_session_value(conn, config)
   end
@@ -128,25 +162,22 @@ defmodule Pow.Plug.Session do
   will always be overridden. If no `:fingerprint` exists in the metadata a
   random UUID value will be generated as its value.
 
+  The session id will be signed for public consumption with
+  `Pow.Plug.sign_token/4`.
+
   See `do_create/3` for more.
   """
   @impl true
   @spec create(Conn.t(), map(), Config.t()) :: {Conn.t(), map()}
   def create(conn, user, config) do
-    conn                  = Conn.fetch_session(conn)
-    {store, store_config} = store(config)
-    metadata              = Map.get(conn.private, :pow_session_metadata, [])
-    {user, metadata}      = session_value(user, metadata)
-    key                   = session_id(config)
-    session_key           = session_key(config)
-
-    store.put(store_config, key, {user, metadata})
+    metadata         = Map.get(conn.private, :pow_session_metadata, [])
+    {user, metadata} = session_value(user, metadata)
 
     conn =
       conn
       |> delete(config)
+      |> before_send_create({user, metadata}, config)
       |> Conn.put_private(:pow_session_metadata, metadata)
-      |> Conn.put_session(session_key, key)
 
     {conn, user}
   end
@@ -154,10 +185,23 @@ defmodule Pow.Plug.Session do
   defp session_value(user, metadata) do
     metadata =
       metadata
-      |> Keyword.put_new(:fingerprint, UUID.generate())
+      |> Keyword.put_new(:fingerprint, gen_fingerprint())
       |> Keyword.put(:inserted_at, timestamp())
 
     {user, metadata}
+  end
+
+  defp gen_fingerprint(), do: UUID.generate()
+
+  defp before_send_create(conn, value, config) do
+    {store, store_config} = store(config)
+    session_id            = gen_session_id(config)
+
+    register_before_send(conn, fn conn ->
+      store.put(store_config, session_id, value)
+
+      client_store_put(conn, session_id, config)
+    end)
   end
 
   @doc """
@@ -171,35 +215,63 @@ defmodule Pow.Plug.Session do
   """
   @impl true
   @spec delete(Conn.t(), Config.t()) :: Conn.t()
-  def delete(conn, config) do
-    conn                  = Conn.fetch_session(conn)
-    key                   = Conn.get_session(conn, session_key(config))
+  def delete(conn, config), do: before_send_delete(conn, config)
+
+  defp before_send_delete(conn, config) do
     {store, store_config} = store(config)
-    session_key           = session_key(config)
 
-    store.delete(store_config, key)
+    register_before_send(conn, fn conn ->
+      case client_store_fetch(conn, config) do
+        {nil, conn} ->
+          conn
 
-    Conn.delete_session(conn, session_key)
+        {session_id, conn} ->
+          store.delete(store_config, session_id)
+
+          client_store_delete(conn, config)
+      end
+    end)
   end
 
   # TODO: Remove by 1.1.0
-  defp convert_old_session_value({key, {user, timestamp}}) when is_number(timestamp), do: {key, {user, inserted_at: timestamp}}
+  defp convert_old_session_value({session_id, {user, timestamp}}) when is_number(timestamp), do: {session_id, {user, inserted_at: timestamp}}
   defp convert_old_session_value(any), do: any
 
-  defp handle_fetched_session_value({_key, :not_found}, conn, _config), do: {conn, nil}
-  defp handle_fetched_session_value({_key, {user, metadata}}, conn, config) when is_list(metadata) do
+  defp handle_fetched_session_value({_session_id, :not_found}, conn, _config), do: {conn, nil}
+  defp handle_fetched_session_value({session_id, {user, metadata}}, conn, config) when is_list(metadata) do
     conn
     |> Conn.put_private(:pow_session_metadata, metadata)
-    |> renew_stale_session(user, metadata, config)
+    |> renew_stale_session(session_id, user, metadata, config)
   end
 
-  defp renew_stale_session(conn, user, metadata, config) do
+  defp renew_stale_session(conn, session_id, user, metadata, config) do
     metadata
     |> Keyword.get(:inserted_at)
     |> session_stale?(config)
     |> case do
-      true  -> create(conn, user, config)
+      true  -> lock_create(conn, session_id, user, config)
       false -> {conn, user}
+    end
+  end
+
+  defp lock_create(conn, session_id, user, config) do
+    id    = {[__MODULE__, session_id], self()}
+    nodes = Node.list() ++ [node()]
+
+    case :global.set_lock(id, nodes, 0) do
+      true ->
+        {conn, user} = create(conn, user, config)
+
+        conn = register_before_send(conn, fn conn ->
+          :global.del_lock(id, nodes)
+
+          conn
+        end)
+
+        {conn, user}
+
+      false ->
+        {conn, user}
     end
   end
 
@@ -212,7 +284,7 @@ defmodule Pow.Plug.Session do
     inserted_at + ttl < timestamp()
   end
 
-  defp session_id(config) do
+  defp gen_session_id(config) do
     uuid = UUID.generate()
 
     Plug.prepend_with_namespace(config, uuid)
@@ -226,18 +298,33 @@ defmodule Pow.Plug.Session do
     Plug.prepend_with_namespace(config, @session_key)
   end
 
-  defp store(config) do
-    case Config.get(config, :session_store, default_store(config)) do
-      {store, store_config} -> {store, store_config}
-      store                 -> {store, []}
+  defp timestamp, do: :os.system_time(:millisecond)
+
+  defp client_store_fetch(conn, config) do
+    conn = Conn.fetch_session(conn)
+
+    with session_id when is_binary(session_id) <- Conn.get_session(conn, session_key(config)),
+         {:ok, session_id}                     <- Plug.verify_token(conn, signing_salt(), session_id) do
+      {session_id, conn}
+    else
+      _any -> {nil, conn}
     end
   end
 
-  defp default_store(config) do
-    backend = Config.get(config, :cache_store_backend, EtsCache)
+  defp signing_salt(), do: Atom.to_string(__MODULE__)
 
-    {CredentialsCache, [backend: backend]}
+  defp client_store_put(conn, session_id, config) do
+    signed_session_id = Plug.sign_token(conn, signing_salt(), session_id, config)
+
+    conn
+    |> Conn.fetch_session()
+    |> Conn.put_session(session_key(config), signed_session_id)
+    |> Conn.configure_session(renew: true)
   end
 
-  defp timestamp, do: :os.system_time(:millisecond)
+  defp client_store_delete(conn, config) do
+    conn
+    |> Conn.fetch_session()
+    |> Conn.delete_session(session_key(config))
+  end
 end

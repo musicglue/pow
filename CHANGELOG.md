@@ -1,5 +1,118 @@
 # Changelog
 
+## v1.0.19 (TBA)
+
+**Warning:** This release will now sign and verify all tokens, causing previous tokens to no longer work. Any sessions and persistent sessions will be invalidated.
+
+### Enhancements
+
+* [`Pow.Plug.Session`] Now sets a global lock when renewing the session
+* [`PowPersistentSession.Plug.Cookie`] Now sets a global lock when authenticating the user
+* [`PowEmailConfirmation.Plug`] Added `PowEmailConfirmation.Plug.sign_confirmation_token/2` to sign the `email_confirmation_token` to prevent timing attacks
+* [`PowEmailConfirmation.Plug`] Added `PowEmailConfirmation.Plug.confirm_email_by_token/2` to verify the signed `email_confirmation_token` to prevent timing attacks
+* [`PowInvitation.Plug`] Added `PowInvitation.Plug.sign_invitation_token/2` to sign the `invitation_token`
+* [`PowInvitation.Plug`] Added `PowInvitation.Plug.load_invited_user_by_token/2` to verify the signed `invitation_token` to prevent timing attacks
+* [`PowResetPassword.Plug`] Changed `PowResetPassword.Plug.create_reset_token/2` to sign the `:token`
+* [`PowResetPassword.Plug`] Added `PowResetPassword.Plug.load_user_by_token/2` to verify the signed token to prevent timing attacks
+* [`PowResetPassword.Plug`] Changed `PowResetPassword.Plug.update_user_password/2` so it decodes the signed token
+* [`PowPersistentSession.Plug.Cookie`] Now uses signed tokens to prevent timing attacks
+* [`Pow.Plug.Session`] Now uses signed session ID's to prevent timing attacks
+* [`Pow.Plug`] Added `Pow.Plug.sign_token/4` to sign tokens
+* [`Pow.Plug`] Added `Pow.Plug.verify_token/4` to decode and verify signed tokens
+* [`Pow.Plug.MessageVerifier`] Added `Pow.Plug.MessageVerifier` module to sign and verify messages
+
+### Deprecations
+
+* [`PowEmailConfirmation.Plug`] `PowEmailConfirmation.Plug.confirm_email/2` has been deprecated in favor of `PowEmailConfirmation.Plug.confirm_email_by_token/2`
+* [`PowInvitation.Plug`] `PowInvitation.Plug.invited_user_from_token/2` has been deprecated in favor of `PowInvitation.Plug.load_invited_user_by_token/2`
+* [`PowInvitation.Plug`] `PowInvitation.Plug.assign_invited_user/2` has been deprecated
+* [`PowResetPassword.Plug`] `PowResetPassword.Plug.user_from_token/2` has been deprecated in favor of `PowResetPassword.Plug.load_user_by_token/2`
+* [`PowResetPassword.Plug`] `PowResetPassword.Plug.assign_reset_password_user/2` has been deprecated
+
+### Documentation
+
+* Updated the [API guide](guides/api.md) with signed tokens
+
+## v1.0.18 (2020-02-14)
+
+### Bug fixes
+
+* [`Pow.Phoenix.Routes`] Fixed bug where callback route methods is not using the overridden method
+* [`PowPersistentSession.Plug.Cookie`] `PowPersistentSession.Plug.Cookie.delete/2` now correctly pulls token during `:before_send` callback
+* [`Pow.Plug.Session`] `Pow.Plug.Session.delete/2` now correctly pulls session id during `:before_send` callback so `PowEmailConfirmation` will remove set session
+
+## v1.0.17 (2020-02-04)
+
+### Enhancements
+
+* [`Pow.Ecto.Context`] Calls to `Pow.Ecto.Context.get_by/2` replaced with `Pow.Operations.get_by/2` so custom users context module can be used. The following methods has been updated:
+  * `Pow.Ecto.Context.authenticate/2`
+  * `PowEmailConfirmation.Ecto.Context.get_by_confirmation_token/2`
+  * `PowInvitation.Ecto.Context.get_by_invitation_token/2`
+  * `PowResetPassword.Ecto.Context.get_by_email/2`
+* [`Pow.Ecto.Schema.Changeset`] `Pow.Ecto.Schema.Changeset.confirm_password_changeset/3` now adds the default `Ecto.Changeset.validate_confirmation/3` error instead of the previous `not same as password` error
+* [`Pow.Ecto.Schema.Changeset`] `Pow.Ecto.Schema.Changeset.confirm_password_changeset/3` now uses the `Ecto.Changeset.validate_confirmation/3` for validation and expects `:password_confirmation` instead of `:confirm_password` in params
+* [`Pow.Ecto.Schema.Changeset`] `Pow.Ecto.Schema.Changeset.new_password_changeset/3` now only requires the `:password_hash` if there have been no previous errors set in the changeset
+* [`Pow.Ecto.Schema`] No longer adds `:confirm_password` virtual field
+* [`Pow.Ecto.Schema`] Now has an `@after_compile` callback that ensures all required fields has been defined
+* [`PowInvitation.Phoenix.InvitationView`] Now renders `:password_confirmation` field instead of `:confirm_password`
+* [`PowResetPassword.Phoenix.ResetPasswordView`] Now renders `:password_confirmation` field instead of `:confirm_password`
+* [`Pow.Phoenix.RegistrationView`] Now renders `:password_confirmation` field instead of `:confirm_password`
+* [`PowEmailConfirmation.Ecto.Schema`] No longer validates if `:email` has been taken before setting `:unconfirmed_email`
+* [`PowEmailConfirmation.Phoenix.ControllerCallbacks`] Now prevents user enumeration for `PowInvitation.Phoenix.InvitationController.create/2`
+* [`PowPersistentSession.Plug.Cookie`] Changed default cookie name to `persistent_session`
+* [`PowPersistentSession.Plug.Cookie`] Removed renewal of cookie as the token will always expire
+* [`PowPersistentSession.Plug.Cookie`] No longer expires invalid cookies
+* [`Pow.Operations`] Added `Pow.Operations.fetch_primary_key_values/2`
+* [`PowPersistentSession.Plug.Base`] Now registers `:before_send` callbacks
+* [`PowPersistentSession.Plug.Cookie`] Now updates cookie and backend store in `:before_send` callback
+* [`Pow.Plug.Base`] Now registers `:before_send` callbacks
+* [`Pow.Plug.Session`] Now updates plug session and backend store in  `:before_send` callback
+* [`Pow.Plug`] Added `Pow.Plug.create/3`
+* [`Pow.Plug`] Added `Pow.Plug.delete/2`
+
+### Removed
+
+* [`PowResetPassword.Phoenix.ResetPasswordController`] Will no longer prevent information leak by checking if `PowEmailConfirmation` or registration routes are enabled; instead it'll by default prevent user enumeration, but can be disabled if `pow_prevent_user_enumeration: false` is set in `conn.private`
+
+### Bug fixes
+
+* [`PowPersistentSession.Plug.Base`] With custom `:persistent_session_store` now falls back to `:cache_store_backend` configuration option
+* [`PowResetPassword.Plug`] With custom `:reset_password_token_store` now falls back to `:cache_store_backend` configuration option
+* [`Pow.Plug.Base`] With custom `:credentials_cache_store` now falls back to `:cache_store_backend` configuration option
+
+### Deprecations
+
+* [`Pow.Ecto.Changeset`] `Pow.Ecto.Schema.Changeset.confirm_password_changeset/3` has deprecated use of `:confirm_password` in params in favor of `:password_confirmation`
+* [`Pow.Plug.Session`] `:session_store` option has been renamed to `:credentials_cache_store`
+* [`Pow.Plug`] `Pow.Plug.clear_authenticated_user/1` deprecated in favor of `Pow.Plug.delete/1`
+
+## v1.0.16 (2020-01-07)
+
+**Note:** This release contains an important security fix.
+
+### Enhancements
+
+* [`PowPersistentSession.Plug.Cookie`] Now supports `:persistent_session_cookie_opts` to customize any options that will be passed on to `Plug.Conn.put_resp_cookie/4`
+* [`PowResetPassword.Phoenix.ResetPasswordController`] Now uses `PowResetPassword.Phoenix.Messages.maybe_email_has_been_sent/1` with a generic response that tells the user the email has been sent only if an account was found
+* [`PowResetPassword.Phoenix.ResetPasswordController`] When a user doesn't exist will now return success message if `PowEmailConfirmation` extension is enabled
+* [`PowResetPassword.Phoenix.Messages`] Added `PowResetPassword.Phoenix.Messages.maybe_email_has_been_sent/1` and let `PowResetPassword.Phoenix.Messages.email_has_been_sent/1` fall back to it
+* [`PowEmailConfirmation.Phoenix.ControllerCallbacks`] When a user tries to sign up and the email has already been taken the default e-mail confirmation required message will be shown
+* [`Pow.Plug.Session`] Now renews the Plug session each time the Pow session is created or rolled
+
+### Bug fixes
+
+* [`Pow.Ecto.Schema.Changeset`] Fixed bug where `Pow.Ecto.Schema.Changeset.user_id_field_changeset/3` update with `nil` value caused an exception to be raised
+* [`PowPersistentSession.Plug.Cookie`] Now expires the cookie 10 seconds after the last request when authenticating to prevent multiple simultaneous requests deletes the cookie immediately
+
+### Documentation
+
+* Added mailer rate limitation section to [production checklist guide](guides/production_checklist.md)
+* [`Pow.Plug.Session`] Added section on session expiration to the docs
+* Updated instructions in [umbrella project guide](guides/umbrella_project.md) to Elixir 1.9
+* [`Pow.Store.Backend.Base`] Updated usage example with Cachex
+* Added [security practices page](guides/security_practices.md)
+
 ## v1.0.15 (2019-11-20)
 
 ### Enhancements

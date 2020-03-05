@@ -4,6 +4,21 @@ defmodule Pow.Plug.Base do
   assign a user in the connection if it has not already been assigned. The user
   will be assigned automatically in any of the operations.
 
+  Any writes to backend store or client should occur in `:before_send` callback
+  as defined in `Plug.Conn`. To ensure that the callbacks are called in the
+  order they were set, a `register_before_send/2` method is used to set
+  callbacks instead of `Plug.Conn.register_before_send/2`.
+
+  ## Configuration options
+
+    * `:credentials_cache_store` - the credentials cache store. This value defaults to
+      `{Pow.Store.CredentialsCache, backend: Pow.Store.Backend.EtsCache}`. The
+      `Pow.Store.Backend.EtsCache` backend store can be changed with the
+      `:cache_store_backend` option.
+
+    * `:cache_store_backend` - the backend cache store. This value defaults to
+      `Pow.Store.Backend.EtsCache`.
+
   ## Example
 
       defmodule MyAppWeb.Pow.CustomPlug do
@@ -30,7 +45,7 @@ defmodule Pow.Plug.Base do
       end
   """
   alias Plug.Conn
-  alias Pow.{Config, Plug}
+  alias Pow.{Config, Plug, Store.Backend.EtsCache, Store.CredentialsCache}
 
   @callback init(Config.t()) :: Config.t()
   @callback call(Conn.t(), Config.t()) :: Conn.t()
@@ -43,7 +58,12 @@ defmodule Pow.Plug.Base do
     quote do
       @behaviour unquote(__MODULE__)
 
+      @before_send_private_key String.to_atom(Macro.underscore(__MODULE__) <> "/before_send")
+
+      import unquote(__MODULE__)
+
       @doc false
+      @impl true
       def init(config), do: config
 
       @doc """
@@ -57,6 +77,7 @@ defmodule Pow.Plug.Base do
       If a user can't be fetched with `Pow.Plug.current_user/2`, `do_fetch/2`
       will be called.
       """
+      @impl true
       def call(conn, config) do
         config = put_plug(config)
         conn   = Plug.put_config(conn, config)
@@ -64,6 +85,17 @@ defmodule Pow.Plug.Base do
         conn
         |> Plug.current_user(config)
         |> maybe_fetch_user(conn, config)
+        |> Conn.register_before_send(fn conn ->
+          conn.private
+          |> Map.get(@before_send_private_key, [])
+          |> Enum.reduce(conn, & &1.(&2))
+        end)
+      end
+
+      defp register_before_send(conn, callback) do
+        callbacks = Map.get(conn.private, @before_send_private_key, []) ++ [callback]
+
+        Conn.put_private(conn, @before_send_private_key, callbacks)
       end
 
       defp put_plug(config) do
@@ -118,5 +150,32 @@ defmodule Pow.Plug.Base do
 
       defoverridable unquote(__MODULE__)
     end
+  end
+
+  @spec store(Config.t()) :: {module(), Config.t()}
+  def store(config) do
+    config
+    |> Config.get(:credentials_cache_store)
+    |> Kernel.||(fallback_store(config))
+    |> case do
+      {store, store_config} -> {store, store_opts(config, store_config)}
+      nil                   -> {CredentialsCache, store_opts(config)}
+    end
+  end
+
+  # TODO: Remove by 1.1.0
+  defp fallback_store(config) do
+    case Config.get(config, :session_store) do
+      nil ->
+        nil
+
+      value ->
+        IO.warn("use of `:session_store` config value is deprecated, use `:credentials_cache_store` instead")
+        value
+    end
+  end
+
+  defp store_opts(config, store_config \\ []) do
+    Keyword.put_new(store_config, :backend, Config.get(config, :cache_store_backend, EtsCache))
   end
 end

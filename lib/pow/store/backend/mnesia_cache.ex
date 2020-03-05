@@ -14,6 +14,9 @@ defmodule Pow.Store.Backend.MnesiaCache do
   The directory path should be accessible, otherwise MnesiaCache will crash on
   startup.
 
+  `:mnesia` should be added to `:extra_applications` in `mix.exs` for it to be
+  included in releases.
+
   ## Distribution
 
   The MnesiaCache is built to handle multi-node setup.
@@ -45,7 +48,7 @@ defmodule Pow.Store.Backend.MnesiaCache do
 
   To start the GenServer, add it to your application `start/2` method:
 
-      defmodule MyAppWeb.Application do
+      defmodule MyApp.Application do
         use Application
 
         def start(_type, _args) do
@@ -64,6 +67,8 @@ defmodule Pow.Store.Backend.MnesiaCache do
 
         # ...
       end
+
+  Update configuration with `cache_store_backend: Pow.Store.Backend.MnesiaCache`.
 
   ## Initialization options
 

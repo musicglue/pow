@@ -35,8 +35,7 @@ defmodule Pow.Ecto.Context do
     * `:user` - the user schema module (required)
     * `:repo_opts` - keyword list options for the repo, `:prefix` can be set here
   """
-  alias Pow.Config
-  alias Pow.Ecto.Schema
+  alias Pow.{Config, Ecto.Schema, Operations}
 
   @type user :: map()
   @type changeset :: map()
@@ -110,7 +109,7 @@ defmodule Pow.Ecto.Context do
 
   defp do_authenticate(user_id_field, user_id_value, password, config) do
     [{user_id_field, user_id_value}]
-    |> get_by(config)
+    |> Operations.get_by(config)
     |> verify_password(password, config)
   end
 
@@ -236,10 +235,18 @@ defmodule Pow.Ecto.Context do
   defp reload_after_write({:ok, struct}, config) do
     # When ecto updates/inserts, has_many :through associations are set to nil.
     # So we'll just reload when writes happen.
-    opts = repo_opts(config, [:prefix])
-    struct = Config.repo!(config).get!(struct.__struct__, struct.id, opts)
+    opts    = repo_opts(config, [:prefix])
+    clauses = fetch_primary_key_values!(struct, config)
+    struct  = Config.repo!(config).get_by!(struct.__struct__, clauses, opts)
 
     {:ok, struct}
+  end
+
+  defp fetch_primary_key_values!(struct, config) do
+    case Operations.fetch_primary_key_values(struct, config) do
+      {:error, error} -> raise error
+      {:ok, clauses}  -> clauses
+    end
   end
 
   # TODO: Remove by 1.1.0

@@ -2,6 +2,11 @@ defmodule PowPersistentSession.Plug.Base do
   @moduledoc """
   Base module for setting up persistent session plugs.
 
+  Any writes to backend store or client should occur in `:before_send` callback
+  as defined in `Plug.Conn`. To ensure that the callbacks are called in the
+  order they were set, a `register_before_send/2` method is used to set
+  callbacks instead of `Plug.Conn.register_before_send/2`.
+
   See `PowPersistentSession.Plug.Cookie` for an implementation example.
 
   ## Configuration options
@@ -24,6 +29,8 @@ defmodule PowPersistentSession.Plug.Base do
   alias Pow.{Config, Plug, Store.Backend.EtsCache}
   alias PowPersistentSession.Store.PersistentSessionCache
 
+  @callback init(Config.t()) :: Config.t()
+  @callback call(Conn.t(), Config.t()) :: Conn.t()
   @callback authenticate(Conn.t(), Config.t()) :: Conn.t()
   @callback create(Conn.t(), map(), Config.t()) :: Conn.t()
 
@@ -32,38 +39,54 @@ defmodule PowPersistentSession.Plug.Base do
     quote do
       @behaviour unquote(__MODULE__)
 
+      @before_send_private_key String.to_atom(Macro.underscore(__MODULE__) <> "/before_send")
+
       import unquote(__MODULE__)
 
-      @spec init(Config.t()) :: Config.t()
+      @impl true
       def init(config), do: config
 
-      @spec call(Conn.t(), Config.t()) :: Conn.t()
+      @impl true
       def call(conn, config) do
         config =
           conn
           |> Plug.fetch_config()
           |> Config.merge(config)
+        conn   = Conn.put_private(conn, :pow_persistent_session, {__MODULE__, config})
 
         conn
-        |> Conn.put_private(:pow_persistent_session, {__MODULE__, config})
-        |> authenticate(config)
+        |> Plug.current_user(config)
+        |> maybe_authenticate(conn, config)
+        |> Conn.register_before_send(fn conn ->
+          conn.private
+          |> Map.get(@before_send_private_key, [])
+          |> Enum.reduce(conn, & &1.(&2))
+        end)
+      end
+
+      defp maybe_authenticate(nil, conn, config), do: authenticate(conn, config)
+      defp maybe_authenticate(_user, conn, _config), do: conn
+
+      defp register_before_send(conn, callback) do
+        callbacks = Map.get(conn.private, @before_send_private_key, []) ++ [callback]
+
+        Conn.put_private(conn, @before_send_private_key, callbacks)
       end
     end
   end
 
   @spec store(Config.t()) :: {module(), Config.t()}
   def store(config) do
-    case Config.get(config, :persistent_session_store, default_store(config)) do
-      {store, store_config} -> {store, store_config}
-      store                 -> {store, []}
+    case Config.get(config, :persistent_session_store) do
+      {store, store_config} -> {store, store_opts(config, store_config)}
+      nil                   -> {PersistentSessionCache, store_opts(config)}
     end
   end
 
-  defp default_store(config) do
-    backend = Config.get(config, :cache_store_backend, EtsCache)
-    ttl     = ttl(config)
-
-    {PersistentSessionCache, [backend: backend, ttl: ttl]}
+  defp store_opts(config, store_config \\ []) do
+    store_config
+    |> Keyword.put_new(:backend, Config.get(config, :cache_store_backend, EtsCache))
+    |> Keyword.put_new(:ttl, ttl(config))
   end
 
   @ttl :timer.hours(24) * 30

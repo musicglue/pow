@@ -59,15 +59,9 @@ defmodule MyAppWeb.Endpoint do
 
   # ...
 
-  plug Plug.Session,
-    store: :cookie,
-    key: "_my_app_key",
-    signing_salt: "secret"
-
+  plug Plug.Session, @session_options
   plug Pow.Plug.Session, otp_app: :my_app
-
   plug MyAppWeb.ReloadUserPlug
-
   # ...
 end
 ```
@@ -76,19 +70,14 @@ end
 
 Let's say that you want to show the user `plan` on most pages. In this case we can safely rely on the cached credentials since we don't need to know the actual value in the database. The worst case is that a different plan may be shown if you haven't ensured that all plan update actions uses the below method.
 
-We can use `do_create/3` defined in the `Pow.Plug.Base` macro to update the cached credentials.
+We can use `Pow.Plug.create/2` to call the plug and update the cached credentials.
 
 First we'll make a helper and import it to our controllers:
 
 ```elixir
 defmodule MyAppWeb.PowHelper do
   @spec sync_user(Plug.Conn.t(), map()) :: Plug.Conn.t()
-  def sync_user(conn, user) do
-    config = Pow.Plug.fetch_config(conn)
-    plug   = Pow.Plug.get_plug(config)
-
-    plug.do_create(conn, user, config)
-  end
+  def sync_user(conn, user), do: Pow.Plug.create(conn, user)
 end
 ```
 

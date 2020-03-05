@@ -12,13 +12,6 @@ defmodule PowEmailConfirmation.Test.RepoMock do
     }, state: :loaded)
   end
 
-  def one(query) do
-    case inspect(query) =~ "where: u0.email == ^\"taken@example.com\"" do
-      true  -> user()
-      false -> false
-    end
-  end
-
   def get_by(User, [email: "test@example.com"], _opts), do: user()
   def get_by(User, [email: "with-unconfirmed-changed-email@example.com"], _opts) do
     %{user() | unconfirmed_email: "new@example.com", email_confirmed_at: DateTime.utc_now()}
@@ -31,11 +24,14 @@ defmodule PowEmailConfirmation.Test.RepoMock do
   def get_by(User, [email_confirmation_token: "valid-with-unconfirmed-changed-email"], _opts) do
     %{user() | unconfirmed_email: "new@example.com", email_confirmed_at: DateTime.utc_now()}
   end
+  def get_by(User, [email_confirmation_token: "valid-with-taken-email"], _opts) do
+    %{user() | unconfirmed_email: "taken@example.com", email_confirmed_at: DateTime.utc_now()}
+  end
 
-  def update(%{changes: %{email: "taken@example.com"}} = changeset, _opts) do
-    changeset = Ecto.Changeset.add_error(changeset, :email, "has already been taken")
+  def update(%{changes: %{email: "taken@example.com"}, valid?: true} = changeset, _opts) do
+    changeset = Ecto.Changeset.add_error(changeset, :email, "has already been taken", constraint: :unique, constraint_name: "users_email_index")
 
-    {:error, changeset}
+    {:error, %{changeset | action: :update}}
   end
   def update(%{valid?: true} = changeset, _opts) do
     %{changeset | repo: __MODULE__}
@@ -57,6 +53,12 @@ defmodule PowEmailConfirmation.Test.RepoMock do
     |> Enum.reduce(changeset, & &1.(&2))
   end
 
+  def insert(%{valid?: false} = changeset, _opts), do: {:error, %{changeset | action: :insert}}
+  def insert(%{changes: %{email: "taken@example.com"}, valid?: true} = changeset, _opts) do
+    changeset = Ecto.Changeset.add_error(changeset, :email, "has already been taken", constraint: :unique, constraint_name: "users_email_index")
+
+    {:error, %{changeset | action: :insert}}
+  end
   def insert(%{valid?: true} = changeset, _opts) do
     user =
       changeset
@@ -69,7 +71,7 @@ defmodule PowEmailConfirmation.Test.RepoMock do
     {:ok, user}
   end
 
-  def get!(User, 1, _opts), do: Process.get({:user, 1})
+  def get_by!(User, [id: 1], _opts), do: Process.get({:user, 1})
 
   defmodule Invitation do
     @moduledoc false
@@ -80,6 +82,6 @@ defmodule PowEmailConfirmation.Test.RepoMock do
 
     def update(changeset, opts), do: RepoMock.update(changeset, opts)
 
-    def get!(User, 1, _opts), do: Process.get({:user, 1})
+    def get_by!(User, [id: 1], _opts), do: Process.get({:user, 1})
   end
 end

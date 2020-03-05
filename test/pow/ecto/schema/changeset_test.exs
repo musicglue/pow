@@ -9,13 +9,13 @@ defmodule Pow.Ecto.Schema.ChangesetTest do
     @valid_params %{
       "email" => "john.doe@example.com",
       "password" => "secret1234",
-      "confirm_password" => "secret1234",
+      "password_confirmation" => "secret1234",
       "custom" => "custom"
     }
     @valid_params_username %{
       "username" => "john.doe",
       "password" => "secret1234",
-      "confirm_password" => "secret1234"
+      "password_confirmation" => "secret1234"
     }
 
     test "requires user id" do
@@ -23,6 +23,10 @@ defmodule Pow.Ecto.Schema.ChangesetTest do
       assert changeset.valid?
 
       changeset = User.changeset(%User{}, Map.delete(@valid_params, "email"))
+      refute changeset.valid?
+      assert changeset.errors[:email] == {"can't be blank", [validation: :required]}
+
+      changeset = User.changeset(%User{email: "john.doe@example.com"}, %{email: nil})
       refute changeset.valid?
       assert changeset.errors[:email] == {"can't be blank", [validation: :required]}
 
@@ -37,7 +41,8 @@ defmodule Pow.Ecto.Schema.ChangesetTest do
     test "validates user id as email" do
       changeset = User.changeset(%User{}, Map.put(@valid_params, "email", "invalid"))
       refute changeset.valid?
-      assert changeset.errors[:email] == {"has invalid format", [validator: &Pow.Ecto.Schema.Changeset.validate_email/1, reason: "invalid format"]}
+      assert changeset.errors[:email] == {"has invalid format", [validation: :email_format, reason: "invalid format"]}
+      assert changeset.validations[:email] == {:email_format, &Pow.Ecto.Schema.Changeset.validate_email/1}
 
       changeset = User.changeset(%User{}, @valid_params)
       assert changeset.valid?
@@ -48,7 +53,8 @@ defmodule Pow.Ecto.Schema.ChangesetTest do
       changeset = Changeset.user_id_field_changeset(%User{}, @valid_params, config)
 
       refute changeset.valid?
-      assert changeset.errors[:email] == {"has invalid format", [validator: config[:email_validator], reason: "custom message john.doe@example.com"]}
+      assert changeset.errors[:email] == {"has invalid format", [validation: :email_format, reason: "custom message john.doe@example.com"]}
+      assert changeset.validations[:email] == {:email_format, config[:email_validator]}
 
       config    = [email_validator: fn _email -> :ok end]
       changeset = Changeset.user_id_field_changeset(%User{}, @valid_params, config)
@@ -86,7 +92,7 @@ defmodule Pow.Ecto.Schema.ChangesetTest do
         %User{}
         |> User.changeset(@valid_params)
         |> Repo.insert()
-      assert changeset.errors[:email] == {"has already been taken", [constraint: :unique, constraint_name: "users_email_index"]}
+      assert changeset.errors[:email] == {"has already been taken", constraint: :unique, constraint_name: "users_email_index"}
 
       {:ok, _user} =
         %UsernameUser{}
@@ -97,7 +103,7 @@ defmodule Pow.Ecto.Schema.ChangesetTest do
         %UsernameUser{}
         |> UsernameUser.changeset(@valid_params_username)
         |> Repo.insert()
-      assert changeset.errors[:username] == {"has already been taken", [constraint: :unique, constraint_name: "users_username_index"]}
+      assert changeset.errors[:username] == {"has already been taken", constraint: :unique, constraint_name: "users_username_index"}
     end
 
     test "requires password when password_hash is nil" do
@@ -139,10 +145,10 @@ defmodule Pow.Ecto.Schema.ChangesetTest do
     end
 
     test "can confirm and hash password" do
-      changeset = User.changeset(%User{}, Map.put(@valid_params, "confirm_password", "invalid"))
+      changeset = User.changeset(%User{}, Map.put(@valid_params, "password_confirmation", "invalid"))
 
       refute changeset.valid?
-      assert changeset.errors[:confirm_password] == {"not same as password", []}
+      assert changeset.errors[:password_confirmation] == {"does not match confirmation", [validation: :confirmation]}
       refute changeset.changes[:password_hash]
 
       changeset = User.changeset(%User{}, @valid_params)
@@ -150,6 +156,50 @@ defmodule Pow.Ecto.Schema.ChangesetTest do
       assert changeset.valid?
       assert changeset.changes[:password_hash]
       assert Password.pbkdf2_verify("secret1234", changeset.changes[:password_hash])
+    end
+
+    test "only validates password hash when no previous errors" do
+      params = Map.drop(@valid_params, ["email"])
+      changeset = User.changeset(%User{}, params)
+
+      refute changeset.valid?
+      refute changeset.errors[:password_hash]
+
+      params = Map.drop(@valid_params, ["password"])
+      changeset = User.changeset(%User{}, params)
+
+      refute changeset.valid?
+      refute changeset.errors[:password_hash]
+
+      params = Map.drop(@valid_params, ["password"])
+      changeset = User.changeset(%User{}, params)
+
+      refute changeset.valid?
+      refute changeset.errors[:password_hash]
+
+      config = [password_hash_methods: {fn _ -> nil end, & &1}]
+      changeset = Changeset.password_changeset(%User{}, @valid_params, config)
+
+      refute changeset.valid?
+      assert changeset.errors[:password_hash] == {"can't be blank", [validation: :required]}
+    end
+
+    # TODO: Remove by 1.1.0
+    test "handle `confirm_password` conversion" do
+      params =
+        @valid_params
+        |> Map.delete("password_confirmation")
+        |> Map.put("confirm_password", "secret1234")
+      changeset = User.changeset(%User{}, params)
+
+      assert changeset.valid?
+
+      params    = Map.put(params, "confirm_password", "invalid")
+      changeset = User.changeset(%User{}, params)
+
+      refute changeset.valid?
+      assert changeset.errors[:confirm_password] == {"does not match confirmation", [validation: :confirmation]}
+      refute changeset.errors[:password_confirmation]
     end
 
     test "can use custom password hash methods" do
@@ -179,7 +229,8 @@ defmodule Pow.Ecto.Schema.ChangesetTest do
 
       changeset = User.changeset(user, Map.put(@valid_params, "current_password", "invalid"))
       refute changeset.valid?
-      assert changeset.errors[:current_password] == {"is invalid", []}
+      assert changeset.errors[:current_password] == {"is invalid", [validation: :verify_password]}
+      assert changeset.validations[:current_password] == {:verify_password, []}
 
       changeset = User.changeset(user, Map.put(@valid_params, "current_password", "secret1234"))
       assert changeset.valid?

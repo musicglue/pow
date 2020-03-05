@@ -1,7 +1,7 @@
 defmodule Pow.MixProject do
   use Mix.Project
 
-  @version "1.0.15"
+  @version "1.0.18"
 
   def project do
     [
@@ -40,15 +40,15 @@ defmodule Pow.MixProject do
       {:phoenix_html, ">= 2.0.0 and <= 3.0.0"},
       {:plug, ">= 1.5.0 and < 2.0.0", optional: true},
 
-      {:phoenix_ecto, "~> 4.0.0", only: [:dev, :test]},
-      {:credo, "~> 1.1.0", only: [:dev, :test]},
+      {:phoenix_ecto, "~> 4.1.0", only: [:dev, :test]},
+      {:credo, "~> 1.2.0", only: [:dev, :test]},
       {:jason, "~> 1.0", only: [:dev, :test]}, # Credo requires jason to exist also in :dev
 
       {:ex_doc, "~> 0.21.0", only: :dev},
 
-      {:ecto_sql, "~> 3.1", only: [:test]},
-      {:plug_cowboy, "~> 2.0", only: [:test]},
-      {:postgrex, "~> 0.15.0", only: [:test]}
+      {:ecto_sql, "~> 3.3", only: [:test]},
+      {:plug_cowboy, "~> 2.1", only: [:test]},
+      {:postgrex, "~> 0.15.3", only: [:test]}
     ]
   end
 
@@ -79,6 +79,7 @@ defmodule Pow.MixProject do
         "CHANGELOG.md": [filename: "CHANGELOG"],
         "guides/why_pow.md": [],
         "guides/production_checklist.md": [],
+        "guides/security_practices.md": [],
         "guides/coherence_migration.md": [],
         "guides/configuring_mailer.md": [],
         "guides/user_roles.md": [],

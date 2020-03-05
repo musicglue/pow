@@ -1,19 +1,20 @@
 defmodule PowPersistentSession.Phoenix.ControllerCallbacksTest do
   use PowPersistentSession.TestWeb.Phoenix.ConnCase
 
-  alias PowPersistentSession.Store.PersistentSessionCache
+  alias Pow.Plug
+  alias PowPersistentSession.{Plug.Cookie, Store.PersistentSessionCache}
 
   @valid_params %{"email" => "test@example.com", "password" => "secret1234"}
   @max_age Integer.floor_div(:timer.hours(30) * 24, 1000)
-  @cookie_key "persistent_session_cookie"
+  @cookie_key "persistent_session"
 
   describe "Pow.Phoenix.SessionController.create/2" do
     test "generates cookie", %{conn: conn, ets: ets} do
       conn = post conn, Routes.pow_session_path(conn, :create, %{"user" => @valid_params})
-      assert session_fingerprint = conn.private[:pow_session_metadata][:fingerprint]
 
+      assert session_fingerprint = conn.private[:pow_session_metadata][:fingerprint]
       assert %{max_age: @max_age, path: "/", value: id} = conn.resp_cookies[@cookie_key]
-      assert PersistentSessionCache.get([backend: ets], id) == {[id: 1], session_metadata: [fingerprint: session_fingerprint]}
+      assert get_from_cache(conn, id, backend: ets) == {[id: 1], session_metadata: [fingerprint: session_fingerprint]}
     end
 
     test "with persistent_session param set to false", %{conn: conn} do
@@ -32,13 +33,21 @@ defmodule PowPersistentSession.Phoenix.ControllerCallbacksTest do
   end
 
   describe "Pow.Phoenix.SessionController.delete/2" do
-    test "generates cookie", %{conn: conn, ets: ets} do
+    test "expires cookie", %{conn: conn, ets: ets} do
       conn = post conn, Routes.pow_session_path(conn, :create, %{"user" => @valid_params})
-      %{value: id} = conn.resp_cookies[@cookie_key]
+
+      assert %{value: id} = conn.resp_cookies[@cookie_key]
+
       conn = delete conn, Routes.pow_session_path(conn, :delete)
 
-      assert %{max_age: -1, path: "/", value: ""} = conn.resp_cookies[@cookie_key]
-      assert PersistentSessionCache.get([backend: ets], id) == :not_found
+      assert conn.resp_cookies[@cookie_key] == %{max_age: 0, path: "/", universal_time: {{1970, 1, 1}, {0, 0, 0}}}
+      assert get_from_cache(conn, id, backend: ets) == :not_found
     end
+  end
+
+  defp get_from_cache(conn, token, config) do
+    assert {:ok, token} = Plug.verify_token(conn, Atom.to_string(Cookie), token)
+
+    PersistentSessionCache.get(config, token)
   end
 end

@@ -4,6 +4,7 @@ defmodule PowInvitation.Phoenix.InvitationController do
 
   alias Plug.Conn
   alias Pow.Phoenix.SessionController
+  alias Pow.Plug, as: PowPlug
   alias PowInvitation.{Phoenix.Mailer, Plug}
 
   plug :require_authenticated when action in [:new, :create, :show]
@@ -34,29 +35,41 @@ defmodule PowInvitation.Phoenix.InvitationController do
   def respond_create({:ok, %{email: email} = user, conn}) when is_binary(email) do
     deliver_email(conn, user)
 
-    conn
-    |> put_flash(:info, extension_messages(conn).invitation_email_sent(conn))
-    |> redirect(to: routes(conn).path_for(conn, __MODULE__, :new))
+    invitation_sent_redirect(conn)
   end
   def respond_create({:ok, user, conn}) do
     redirect(conn, to: routes(conn).path_for(conn, __MODULE__, :show, [user.invitation_token]))
   end
   def respond_create({:error, changeset, conn}) do
-    conn
-    |> assign(:changeset, changeset)
-    |> render("new.html")
+    case PowPlug.__prevent_user_enumeration__(conn, changeset) do
+      true  ->
+        invitation_sent_redirect(conn)
+
+      false ->
+        conn
+        |> assign(:changeset, changeset)
+        |> render("new.html")
+    end
   end
 
   defp deliver_email(conn, user) do
     url        = invitation_url(conn, user)
-    invited_by = Pow.Plug.current_user(conn)
+    invited_by = PowPlug.current_user(conn)
     email      = Mailer.invitation(conn, user, invited_by, url)
 
     Pow.Phoenix.Mailer.deliver(conn, email)
   end
 
   defp invitation_url(conn, user) do
-    routes(conn).url_for(conn, __MODULE__, :edit, [user.invitation_token])
+    token = Plug.sign_invitation_token(conn, user)
+
+    routes(conn).url_for(conn, __MODULE__, :edit, [token])
+  end
+
+  defp invitation_sent_redirect(conn) do
+    conn
+    |> put_flash(:info, extension_messages(conn).invitation_email_sent(conn))
+    |> redirect(to: routes(conn).path_for(conn, __MODULE__, :new))
   end
 
   @spec process_show(Conn.t(), map()) :: {:ok, Conn.t()}
@@ -99,15 +112,15 @@ defmodule PowInvitation.Phoenix.InvitationController do
   end
 
   defp load_user_from_invitation_token(%{params: %{"id" => token}} = conn, _opts) do
-    case Plug.invited_user_from_token(conn, token) do
-      nil  ->
+    case Plug.load_invited_user_by_token(conn, token) do
+      {:error, conn}  ->
         conn
         |> put_flash(:error, extension_messages(conn).invalid_invitation(conn))
         |> redirect(to: routes(conn).path_for(conn, SessionController, :new))
         |> halt()
 
-      user ->
-        Plug.assign_invited_user(conn, user)
+      {:ok, conn} ->
+        conn
     end
   end
 

@@ -42,7 +42,9 @@ defmodule Pow.Test.ExtensionMocks do
       messages_backend: Module.concat([web_module, Phoenix.Messages]),
       routes_backend: Module.concat([web_module, Phoenix.Routes]),
       extensions: extensions,
-      controller_callbacks: Pow.Extension.Phoenix.ControllerCallbacks]
+      controller_callbacks: Pow.Extension.Phoenix.ControllerCallbacks,
+      message_verifier: Pow.Test.MessageVerifier
+    ]
 
     __user_schema__(context_module, extensions)
     __phoenix_endpoint__(web_module, config, opts)
@@ -122,6 +124,14 @@ defmodule Pow.Test.ExtensionMocks do
 
       use Phoenix.Endpoint, otp_app: :pow
 
+      @session_options [
+        store: :cookie,
+        key: "_binaryid_key",
+        signing_salt: "secret"
+      ]
+
+      @pow_config unquote(config)
+
       plug Plug.RequestId
       plug Plug.Logger
 
@@ -133,17 +143,12 @@ defmodule Pow.Test.ExtensionMocks do
       plug Plug.MethodOverride
       plug Plug.Head
 
-      plug Plug.Session,
-        store: :cookie,
-        key: "_binaryid_key",
-        signing_salt: "secret"
-
-      plug SessionPlugHelper, unquote(config)
-
-      if Code.ensure_compiled?(unquote(opts[:plug])) do
+      plug Plug.Session, @session_options
+      plug SessionPlugHelper, @pow_config
+      if unquote(opts[:plug]) do
+        Code.ensure_compiled(unquote(opts[:plug]))
         plug unquote(opts[:plug])
       end
-
       plug unquote(web_module).Phoenix.Router
     end
 
@@ -168,7 +173,7 @@ defmodule Pow.Test.ExtensionMocks do
         end
       end
 
-      setup _tags do
+      setup do
         unquote(cache_backend).init()
         {:ok, conn: Phoenix.ConnTest.build_conn(), ets: unquote(cache_backend)}
       end

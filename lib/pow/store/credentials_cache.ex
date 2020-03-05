@@ -2,19 +2,17 @@ defmodule Pow.Store.CredentialsCache do
   @moduledoc """
   Default module for credentials session storage.
 
-  A key (session id), is used to store, fetch or delete credentials. When
-  credentials are stored or deleted, a credentials key will be generated.
-  The value of that key will be all current keys (session ids), and the
-  most recent credentials.
-
-  When a key is updated, all expired keys will be pruned from the credentials
-  key.
-
-  The credentials are expected to take the form of
+  A key (session id) is used to store, fetch, or delete credentials. The
+  credentials are expected to take the form of
   `{credentials, session_metadata}`, where session metadata is data exclusive
   to the session id.
+
+  This module also adds two utility methods:
+
+    * `users/2` - to list all current users
+    * `sessions/2` - to list all current sessions
   """
-  alias Pow.{Config, Store.Base}
+  alias Pow.{Config, Operations, Store.Base}
 
   use Base,
     ttl: :timer.minutes(30),
@@ -42,7 +40,7 @@ defmodule Pow.Store.CredentialsCache do
 
   # TODO: Refactor by 1.1.0
   defp fetch_sessions(config, backend_config, user) do
-    {struct, id} = user_to_struct_id(user)
+    {struct, id} = user_to_struct_id!(user, [])
 
     config
     |> Base.all(backend_config, [struct, :user, id, :session, :_])
@@ -68,7 +66,7 @@ defmodule Pow.Store.CredentialsCache do
   """
   @impl true
   def put(config, session_id, {user, metadata}) do
-    {struct, id} = user_to_struct_id(user)
+    {struct, id} = user_to_struct_id!(user, [])
     user_key     = [struct, :user, id]
     session_key  = [struct, :user, id, :session, session_id]
     records      = [
@@ -131,33 +129,26 @@ defmodule Pow.Store.CredentialsCache do
     end
   end
 
-  defp user_to_struct_id(%struct{} = user) do
-    key_value = case function_exported?(struct, :__schema__, 1) do
-      true  -> key_value_from_primary_keys(user)
-      false -> primary_keys_to_keyword_list!([:id], user)
-    end
+  defp user_to_struct_id!(%mod{} = user, config) do
+    key_values =
+      user
+      |> fetch_primary_key_values!(config)
+      |> Enum.sort(&elem(&1, 0) < elem(&2, 0))
+      |> case do
+        [id: id] -> id
+        clauses  -> clauses
+      end
 
-    {struct, key_value}
+    {mod, key_values}
   end
-  defp user_to_struct_id(_user), do: raise "Only structs can be stored as credentials"
+  defp user_to_struct_id!(_user, _config), do: raise_error "Only structs can be stored as credentials"
 
-  defp key_value_from_primary_keys(%struct{} = user) do
-    :primary_key
-    |> struct.__schema__()
-    |> Enum.sort()
-    |> primary_keys_to_keyword_list!(user)
-  end
-
-  defp primary_keys_to_keyword_list!([], %struct{}), do: raise "No primary keys found for #{inspect struct}"
-  defp primary_keys_to_keyword_list!([key], user), do: get_primary_key_value!(user, key)
-  defp primary_keys_to_keyword_list!(keys, user) do
-    Enum.map(keys, &{&1, get_primary_key_value!(user, &1)})
-  end
-
-  defp get_primary_key_value!(%struct{} = user, key) do
-    case Map.get(user, key) do
-      nil -> raise "Primary key value for key `#{inspect key}` in #{inspect struct} can't be `nil`"
-      val -> val
+  defp fetch_primary_key_values!(user, config) do
+    user
+    |> Operations.fetch_primary_key_values(config)
+    |> case do
+      {:error, error} -> raise_error error
+      {:ok, clauses}  -> clauses
     end
   end
 
@@ -180,6 +171,9 @@ defmodule Pow.Store.CredentialsCache do
       end
     end)
   end
+
+  @spec raise_error(binary()) :: no_return()
+  defp raise_error(message), do: raise message
 
   # TODO: Remove by 1.1.0
   @doc false

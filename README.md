@@ -25,7 +25,7 @@ Add Pow to your list of dependencies in `mix.exs`:
 defp deps do
   [
     # ...
-    {:pow, "~> 1.0.15"}
+    {:pow, "~> 1.0.18"}
   ]
 end
 ```
@@ -54,9 +54,15 @@ PRIV_PATH/repo/migrations/TIMESTAMP_create_user.ex
 Add the following to `config/config.exs`:
 
 ```elixir
+use Mix.Config
+
+# ... existing config
+  
 config :my_app, :pow,
   user: MyApp.Users.User,
   repo: MyApp.Repo
+
+# ... import_config
 ```
 
 Set up `WEB_PATH/endpoint.ex` to enable session based authentication (`Pow.Plug.Session` is added after `Plug.Session`):
@@ -67,13 +73,8 @@ defmodule MyAppWeb.Endpoint do
 
   # ...
 
-  plug Plug.Session,
-    store: :cookie,
-    key: "_my_app_key",
-    signing_salt: "secret"
-
+  plug Plug.Session, @session_options
   plug Pow.Plug.Session, otp_app: :my_app
-
   plug MyAppWeb.Phoenix.Router
 end
 ```
@@ -522,7 +523,7 @@ By default `Pow.Store.Backend.EtsCache` is started automatically and can be used
 For a production environment, you should use a distributed, persistent cache store. Pow makes this easy with `Pow.Store.Backend.MnesiaCache`. To start MnesiaCache in your Phoenix app, add it to your `application.ex` supervisor:
 
 ```elixir
-defmodule MyAppWeb.Application do
+defmodule MyApp.Application do
   use Application
 
   def start(_type, _args) do
@@ -545,7 +546,7 @@ end
 
 Update the config `cache_store_backend: Pow.Store.Backend.MnesiaCache`.
 
-Remember to add `:mnesia` to your `:extra_applications` so it'll be available for your release build.
+Remember to add `:mnesia` to your `:extra_applications` so it'll be available for your release build. Mnesia will write files to the current working directory. The path can be changed with `config :mnesia, dir: '/path/to/dir'`.
 
 The MnesiaCache requires write access. If you've a read-only file system you should take a look at the [Redis cache backend store guide](guides/redis_cache_store_backend.md).
 
@@ -563,17 +564,7 @@ If you're currently using Coherence, you can migrate your app to use Pow instead
 
 ## Pow security practices
 
-* The `user_id_field` value is always treated as case insensitive
-* If the `user_id_field` is `:email`, it'll be validated based on RFC 5322 (excluding IP validation)
-* The `:password` has a minimum length of 8 characters
-* The `:password` has a maximum length of 4096 bytes [to prevent DOS attacks against Pbkdf2](https://github.com/riverrun/pbkdf2_elixir/blob/master/lib/pbkdf2.ex#L21)
-* The `:password_hash` is generated with `PBKDF2-SHA512` with 100,000 iterations
-* The session value contains a UUID token that is used to pull credentials through a GenServer
-* The credentials are stored in a key-value cache with TTL of 30 minutes
-* The credentials and session are renewed after 15 minutes if any activity is detected
-* The credentials and session are renewed when user updates
-
-Some of the above is based on [OWASP](https://www.owasp.org/) or [NIST SP800-63b](https://pages.nist.gov/800-63-3/sp800-63b.html) recommendations.
+See [security practices](guides/security_practices.md).
 
 ## Other libraries
 

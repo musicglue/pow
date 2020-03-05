@@ -6,7 +6,7 @@ defmodule PowEmailConfirmation.Ecto.SchemaTest do
   alias PowEmailConfirmation.Test.{RepoMock, Users.User}
 
   @password          "secret1234"
-  @valid_params     %{email: "test@example.com", password: @password, confirm_password: @password, current_password: @password}
+  @valid_params     %{email: "test@example.com", password: @password, password_confirmation: @password, current_password: @password}
 
   test "user_schema/1" do
     user = %User{}
@@ -93,7 +93,8 @@ defmodule PowEmailConfirmation.Ecto.SchemaTest do
       changeset = User.changeset(user, Map.put(@valid_params, :email, "invalid"))
 
       refute changeset.valid?
-      assert changeset.errors[:email] == {"has invalid format", [validator: &Pow.Ecto.Schema.Changeset.validate_email/1, reason: "invalid format"]}
+      assert changeset.errors[:email] == {"has invalid format", [validation: :email_format, reason: "invalid format"]}
+      assert changeset.validations[:email] == {:email_format, &Pow.Ecto.Schema.Changeset.validate_email/1}
       refute Ecto.Changeset.get_change(changeset, :email_confirmation_token)
       refute Ecto.Changeset.get_change(changeset, :unconfirmed_email)
 
@@ -105,20 +106,10 @@ defmodule PowEmailConfirmation.Ecto.SchemaTest do
       changeset = User.changeset(user, Map.put(@valid_params, :email, "invalid"))
 
       refute changeset.valid?
-      assert changeset.errors[:email] == {"has invalid format", [validator: &Pow.Ecto.Schema.Changeset.validate_email/1, reason: "invalid format"]}
+      assert changeset.errors[:email] == {"has invalid format", [validation: :email_format, reason: "invalid format"]}
+      assert changeset.validations[:email] == {:email_format, &Pow.Ecto.Schema.Changeset.validate_email/1}
       assert Ecto.Changeset.get_field(changeset, :email_confirmation_token) == user.email_confirmation_token
       assert Ecto.Changeset.get_field(changeset, :unconfirmed_email) == user.unconfirmed_email
-    end
-
-    test "doesn't update when :email already taken by another user", %{user: user} do
-      {:error, changeset} =
-        user
-        |> User.changeset(Map.put(@valid_params, :email, "taken@example.com"))
-        |> RepoMock.update([])
-
-      assert changeset.errors[:email] == {"has already been taken", [validation: :unsafe_unique, fields: [:email]]}
-      assert Ecto.Changeset.get_change(changeset, :email) == "taken@example.com"
-      assert Ecto.Changeset.get_change(changeset, :unconfirmed_email) == "taken@example.com"
     end
   end
 

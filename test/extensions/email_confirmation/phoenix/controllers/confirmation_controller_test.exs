@@ -1,11 +1,16 @@
 defmodule PowEmailConfirmation.Phoenix.ConfirmationControllerTest do
   use PowEmailConfirmation.TestWeb.Phoenix.ConnCase
 
+  alias Plug.Conn
+  alias Pow.Plug, as: PowPlug
+  alias PowEmailConfirmation.Plug
+  alias PowEmailConfirmation.{Test, Test.Users.User}
+
   @session_key "auth"
 
   describe "show/2" do
     test "confirms with valid token", %{conn: conn} do
-      conn = get conn, Routes.pow_email_confirmation_confirmation_path(conn, :show, "valid")
+      conn = get conn, Routes.pow_email_confirmation_confirmation_path(conn, :show, sign_token("valid"))
 
       assert redirected_to(conn) == Routes.pow_session_path(conn, :new)
       assert get_flash(conn, :info) == "The email address has been confirmed."
@@ -18,7 +23,8 @@ defmodule PowEmailConfirmation.Phoenix.ConfirmationControllerTest do
     end
 
     test "confirms with valid token and :unconfirmed_email", %{conn: conn} do
-      conn = get conn, Routes.pow_email_confirmation_confirmation_path(conn, :show, "valid-with-unconfirmed-changed-email")
+      conn = get conn, Routes.pow_email_confirmation_confirmation_path(conn, :show, sign_token("valid-with-unconfirmed-changed-email"))
+
       assert redirected_to(conn) == Routes.pow_session_path(conn, :new)
       assert get_flash(conn, :info) == "The email address has been confirmed."
 
@@ -28,8 +34,26 @@ defmodule PowEmailConfirmation.Phoenix.ConfirmationControllerTest do
       refute user.unconfirmed_email
     end
 
+    test "fails with unique constraint", %{conn: conn} do
+      conn = get conn, Routes.pow_email_confirmation_confirmation_path(conn, :show, sign_token("valid-with-taken-email"))
+
+      assert redirected_to(conn) == Routes.pow_session_path(conn, :new)
+      assert get_flash(conn, :error) == "The email address couldn't be confirmed."
+
+      refute Process.get({:user, 1})
+    end
+
     test "fails with invalid token", %{conn: conn} do
-      conn = get conn, Routes.pow_email_confirmation_confirmation_path(conn, :show, "invalid")
+      conn = get conn, Routes.pow_email_confirmation_confirmation_path(conn, :show, sign_token("invalid"))
+
+      assert redirected_to(conn) == Routes.pow_session_path(conn, :new)
+      assert get_flash(conn, :error) == "The email address couldn't be confirmed."
+
+      refute Process.get({:user, 1})
+    end
+
+    test "fails with unsigned token", %{conn: conn} do
+      conn = get conn, Routes.pow_email_confirmation_confirmation_path(conn, :show, "valid")
 
       assert redirected_to(conn) == Routes.pow_session_path(conn, :new)
       assert get_flash(conn, :error) == "The email address couldn't be confirmed."
@@ -41,8 +65,8 @@ defmodule PowEmailConfirmation.Phoenix.ConfirmationControllerTest do
       session_id = conn.private[:plug_session][@session_key]
       conn       =
         conn
-        |> Pow.Plug.assign_current_user(%{id: 1}, [])
-        |> get(Routes.pow_email_confirmation_confirmation_path(conn, :show, "valid"))
+        |> Pow.Plug.assign_current_user(%User{id: 1}, [])
+        |> get(Routes.pow_email_confirmation_confirmation_path(conn, :show, sign_token("valid")))
 
       assert redirected_to(conn) == Routes.pow_registration_path(conn, :edit)
       assert Pow.Plug.current_user(conn)
@@ -53,12 +77,18 @@ defmodule PowEmailConfirmation.Phoenix.ConfirmationControllerTest do
       session_id = conn.private[:plug_session][@session_key]
       conn       =
         conn
-        |> Pow.Plug.assign_current_user(%{id: 2}, [])
-        |> get(Routes.pow_email_confirmation_confirmation_path(conn, :show, "valid"))
+        |> Pow.Plug.assign_current_user(%User{id: 2}, [])
+        |> get(Routes.pow_email_confirmation_confirmation_path(conn, :show, sign_token("valid")))
 
       assert redirected_to(conn) == Routes.pow_registration_path(conn, :edit)
       assert Pow.Plug.current_user(conn)
       assert conn.private[:plug_session][@session_key] == session_id
     end
+  end
+
+  defp sign_token(token) do
+    %Conn{}
+    |> PowPlug.put_config(Test.pow_config())
+    |> Plug.sign_confirmation_token(%{email_confirmation_token: token})
   end
 end

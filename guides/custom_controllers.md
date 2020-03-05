@@ -142,9 +142,9 @@ defmodule MyAppWeb.SessionController do
   end
 
   def delete(conn, _params) do
-    {:ok, conn} = Pow.Plug.clear_authenticated_user(conn)
-
-    redirect(conn, to: Routes.page_path(conn, :index))
+    conn
+    |> Pow.Plug.delete()
+    |> redirect(to: Routes.page_path(conn, :index))
   end
 end
 ```
@@ -155,17 +155,17 @@ Create `lib/my_app_web/templates/registration/new.html.eex`:
 
 ```elixir
 <%= form_for @changeset, Routes.signup_path(@conn, :create), fn f -> %>
-  <%= label f, :email, "email" %>
+  <%= label f, :email %>
   <%= email_input f, :email %>
   <%= error_tag f, :email %>
 
-  <%= label f, :password, "password" %>
+  <%= label f, :password %>
   <%= password_input f, :password %>
   <%= error_tag f, :password %>
 
-  <%= label f, :confirm_password, "confirm_password" %>
-  <%= password_input f, :confirm_password %>
-  <%= error_tag f, :confirm_password %>
+  <%= label f, :password_confirmation %>
+  <%= password_input f, :password_confirmation %>
+  <%= error_tag f, :password_confirmation %>
 
   <%= submit "Register" %>
 <% end %>
@@ -213,7 +213,7 @@ defmodule MyAppWeb.SessionController do
 
       false ->
         conn
-        |> Pow.Plug.clear_authenticated_user()
+        |> Pow.Plug.delete()
         |> put_flash(:info, "Your e-mail address has not been confirmed.")
         |> redirect(to: Routes.login_path(conn, :new))
     end

@@ -9,13 +9,13 @@ defmodule Pow.Store.CredentialsCacheTest do
   @config [backend: EtsCacheMock]
   @backend_config [namespace: "credentials"]
 
-  setup context do
+  setup do
     EtsCacheMock.init()
 
-    {:ok, context}
+    {:ok, ets: EtsCacheMock}
   end
 
-  test "stores sessions" do
+  test "stores sessions", %{ets: ets} do
     user_1 = %User{id: 1}
     user_2 = %User{id: 2}
     user_3 = %UsernameUser{id: 1}
@@ -37,9 +37,9 @@ defmodule Pow.Store.CredentialsCacheTest do
     assert CredentialsCache.sessions(@config, user_2) == ["key_3"]
     assert CredentialsCache.sessions(@config, user_3) == ["key_4"]
 
-    assert EtsCacheMock.get(@backend_config, "key_1") == {[User, :user, 1], a: 1}
-    assert EtsCacheMock.get(@backend_config, [User, :user, 1]) == user_1
-    assert EtsCacheMock.get(@backend_config, [User, :user, 1, :session, "key_1"])
+    assert ets.get(@backend_config, "key_1") == {[User, :user, 1], a: 1}
+    assert ets.get(@backend_config, [User, :user, 1]) == user_1
+    assert ets.get(@backend_config, [User, :user, 1, :session, "key_1"])
 
     CredentialsCache.put(@config, "key_2", {%{user_1 | email: :updated}, a: 5})
     assert CredentialsCache.get(@config, "key_1") == {%{user_1 | email: :updated}, a: 1}
@@ -48,16 +48,16 @@ defmodule Pow.Store.CredentialsCacheTest do
     assert CredentialsCache.get(@config, "key_1") == :not_found
     assert CredentialsCache.sessions(@config, user_1) == ["key_2"]
 
-    assert EtsCacheMock.get(@backend_config, "key_1") == :not_found
-    assert EtsCacheMock.get(@backend_config, [User, :user, 1]) == %{user_1 | email: :updated}
-    assert EtsCacheMock.get(@backend_config, [User, :user, 1, :session, "key_1"]) == :not_found
+    assert ets.get(@backend_config, "key_1") == :not_found
+    assert ets.get(@backend_config, [User, :user, 1]) == %{user_1 | email: :updated}
+    assert ets.get(@backend_config, [User, :user, 1, :session, "key_1"]) == :not_found
 
     assert CredentialsCache.delete(@config, "key_2") == :ok
     assert CredentialsCache.sessions(@config, user_1) == []
 
-    assert EtsCacheMock.get(@backend_config, "key_1") == :not_found
-    assert EtsCacheMock.get(@backend_config, [User, :user, 1]) == %{user_1 | email: :updated}
-    assert EtsCacheMock.get(@backend_config, [User, :user, 1, :session, "key_1"]) == :not_found
+    assert ets.get(@backend_config, "key_1") == :not_found
+    assert ets.get(@backend_config, [User, :user, 1]) == %{user_1 | email: :updated}
+    assert ets.get(@backend_config, [User, :user, 1, :session, "key_1"]) == :not_found
   end
 
   test "put/3 invalidates sessions with identical fingerprint" do
@@ -75,23 +75,6 @@ defmodule Pow.Store.CredentialsCacheTest do
     assert CredentialsCache.get(@config, "key_3") == {user, fingerprint: 1}
   end
 
-  test "raises for nil primary key value" do
-    user_1 = %User{id: nil}
-
-    assert_raise RuntimeError, "Primary key value for key `:id` in Pow.Test.Ecto.Users.User can't be `nil`", fn ->
-      CredentialsCache.put(@config, "key_1", {user_1, a: 1})
-    end
-  end
-
-  defmodule NoPrimaryFieldUser do
-    use Ecto.Schema
-
-    @primary_key false
-    schema "users" do
-      timestamps()
-    end
-  end
-
   defmodule CompositePrimaryFieldsUser do
     use Ecto.Schema
 
@@ -104,44 +87,21 @@ defmodule Pow.Store.CredentialsCacheTest do
     end
   end
 
-  test "handles custom primary fields" do
-    assert_raise RuntimeError, "No primary keys found for Pow.Store.CredentialsCacheTest.NoPrimaryFieldUser", fn ->
-      CredentialsCache.put(@config, "key_1", {%NoPrimaryFieldUser{}, a: 1})
-    end
-
-    assert_raise RuntimeError, "Primary key value for key `:another_id` in Pow.Store.CredentialsCacheTest.CompositePrimaryFieldsUser can't be `nil`", fn ->
-      CredentialsCache.put(@config, "key_1", {%CompositePrimaryFieldsUser{}, a: 1})
-    end
-
+  test "sorts composite primary keys", %{ets: ets} do
     user = %CompositePrimaryFieldsUser{some_id: 1, another_id: 2}
 
     CredentialsCache.put(@config, "key_1", {user, a: 1})
 
     assert CredentialsCache.users(@config, CompositePrimaryFieldsUser) == [user]
-  end
-
-  defmodule NonEctoUser do
-    defstruct [:id]
-  end
-
-  test "handles non-ecto user struct" do
-    assert_raise RuntimeError, "Primary key value for key `:id` in Pow.Store.CredentialsCacheTest.NonEctoUser can't be `nil`", fn ->
-      CredentialsCache.put(@config, "key_1", {%NonEctoUser{}, a: 1})
-    end
-
-    user = %NonEctoUser{id: 1}
-
-    assert CredentialsCache.put(@config, "key_1", {user, a: 1})
-
-    assert CredentialsCache.users(@config, NonEctoUser) == [user]
+    assert ets.get(@backend_config, [CompositePrimaryFieldsUser, :user, [another_id: 2, some_id: 1]]) == user
   end
 
   # TODO: Remove by 1.1.0
-  test "backwards compatible" do
+  test "backwards compatible", %{ets: ets} do
     user_1 = %User{id: 1}
     timestamp = :os.system_time(:millisecond)
 
-    EtsCacheMock.put(@backend_config, {"key_1", {user_1, inserted_at: timestamp}})
+    ets.put(@backend_config, {"key_1", {user_1, inserted_at: timestamp}})
 
     assert CredentialsCache.get(@config, @backend_config, "key_1") == {user_1, inserted_at: timestamp}
     assert CredentialsCache.delete(@config, @backend_config, "key_1") == :ok
