@@ -21,7 +21,8 @@ defmodule Mix.Pow do
   @deprecated "Use `ensure_ecto!` or `ensure_phoenix!` instead"
   @spec ensure_dep!(binary(), atom(), OptionParser.argv()) :: :ok
   def ensure_dep!(task, dep, _args) do
-    fetch_deps()
+    []
+    |> Dep.load_on_environment()
     |> top_level_dep_in_deps?(dep)
     |> case do
       true ->
@@ -37,7 +38,7 @@ defmodule Mix.Pow do
   """
   @spec ensure_ecto!(binary(), OptionParser.argv()) :: :ok
   def ensure_ecto!(task, _args) do
-    deps = fetch_deps()
+    deps = Dep.load_on_environment([])
 
     cond do
       top_level_dep_in_deps?(deps, :ecto) -> :ok
@@ -53,22 +54,15 @@ defmodule Mix.Pow do
     end)
   end
 
-  # TODO: Remove by 1.1.0 and only support Elixir 1.7
-  defp fetch_deps do
-    System.version()
-    |> Version.match?("~> 1.6.0")
-    |> case do
-      true  -> apply(Dep, :loaded, [[]])
-      false -> apply(Dep, :load_on_environment, [[]])
-    end
-  end
-
   @doc """
   Raises an exception if application doesn't have Phoenix as dependency.
   """
   @spec ensure_phoenix!(binary(), OptionParser.argv()) :: :ok
   def ensure_phoenix!(task, _args) do
-    case top_level_dep_in_deps?(fetch_deps(), :phoenix) do
+    []
+    |> Dep.load_on_environment()
+    |> top_level_dep_in_deps?(:phoenix)
+    |> case do
       true -> :ok
       false -> Mix.raise("mix #{task} can only be run inside an application directory that has :phoenix as dependency")
     end
@@ -79,15 +73,22 @@ defmodule Mix.Pow do
   """
   @spec parse_options(OptionParser.argv(), Keyword.t(), Keyword.t()) :: {map(), OptionParser.argv(), OptionParser.errors()}
   def parse_options(args, switches, default_opts) do
+    generator_opts = parse_context_app(Application.get_env(otp_app(), :generators, []))
+    default_opts   = Keyword.merge(default_opts, generator_opts)
+
     {opts, parsed, invalid} = OptionParser.parse(args, switches: switches)
     default_opts            = to_map(default_opts)
-    opts                    = to_map(opts)
-    config                  =
-      default_opts
-      |> Map.merge(opts)
-      |> context_app_to_atom()
+    opts                    = context_app_to_atom(to_map(opts))
+    config                  = Map.merge(default_opts, opts)
 
     {config, parsed, invalid}
+  end
+
+  defp parse_context_app(options) do
+    case options[:context_app] do
+      {context_app, _path} -> Keyword.put(options, :context_app, context_app)
+      _context_app         -> options
+    end
   end
 
   defp to_map(keyword) do
@@ -226,6 +227,133 @@ defmodule Mix.Pow do
 
       _deps ->
         Mix.raise("No directory for context_app #{inspect(app)} found in #{this_otp_app}'s deps.")
+    end
+  end
+
+  @doc """
+  Injects files with inline content
+  """
+  @spec inject_files([map()]) :: :ok | :error
+  def inject_files(file_injections) do
+    case process_file_injections(file_injections) do
+      {:error, {:missing_files, file_injections}} ->
+        Mix.shell().error("""
+        Could not find the following file(s):
+
+        #{Enum.map_join(file_injections, "\n", &Path.relative_to_cwd(&1.file))}
+        """)
+
+        :error
+
+      {:error, {:invalid_files, file_injections}} ->
+        Mix.shell().error("""
+        Could not configure the following files:
+
+        #{Enum.map_join(file_injections, "\n", &Path.relative_to_cwd(&1.file))}
+        """)
+
+        Mix.shell.info("""
+        To complete please do the following:
+
+        #{Enum.map_join(file_injections, "\n", & &1.instructions)}
+        """)
+
+        :ok
+
+      {:ok, file_injections} ->
+        Enum.each(file_injections, fn
+          %{touched?: false, file: file} ->
+            relative_path = Path.relative_to_cwd(file)
+
+            Mix.shell().info([:yellow, "* already configured ", :reset, relative_path])
+
+          %{touched?: true, file: file, content: content} ->
+            relative_path = Path.relative_to_cwd(file)
+
+            Mix.shell().info([:green, "* injecting ", :reset, relative_path])
+
+            File.write!(file, content)
+        end)
+
+        :ok
+    end
+  end
+
+  defp process_file_injections(file_injections) do
+    with :ok             <- check_all_files_exists(file_injections),
+         file_injections <- read_files(file_injections),
+         :ok             <- check_all_files_can_be_updated(file_injections) do
+      {:ok, Enum.map(file_injections, &prepare_content/1)}
+    end
+  end
+
+  defp check_all_files_exists(file_injections) do
+    case Enum.reject(file_injections, &File.exists?(&1.file)) do
+      [] ->
+        :ok
+
+      file_injections ->
+        {:error, {:missing_files, file_injections}}
+    end
+  end
+
+  defp read_files(file_injections) do
+    Enum.map(file_injections, &Map.put(&1, :content, File.read!(&1.file)))
+  end
+
+  defp check_all_files_can_be_updated(file_injections) do
+    file_injections
+    |> Enum.reject(fn file_injection ->
+      injections = Enum.reject(file_injection.injections, & file_injection.content =~ &1.needle)
+
+      injections == []
+    end)
+    |> case do
+      [] -> :ok
+      file_injections -> {:error, {:invalid_files, file_injections}}
+    end
+  end
+
+  defp prepare_content(file_injection) do
+    file_injection = Map.put(file_injection, :touched?, false)
+
+    case Enum.reject(file_injection.injections, & file_injection.content =~ &1.test) do
+      [] ->
+        file_injection
+
+      injections ->
+        content = inject_content(injections, file_injection.content)
+
+        file_injection
+        |> Map.put(:content, content)
+        |> Map.put(:touched?, true)
+    end
+  end
+
+  defp inject_content(injections, content) do
+    Enum.reduce(injections, content, fn injection, content ->
+      content_lines = String.split(content, "\n")
+      index = Enum.find_index(content_lines, & &1 =~ injection.needle)
+
+      index =
+        case injection[:prepend] do
+          true -> previous_line_until_before_comments(content_lines, index - 1)
+          _any -> index
+        end
+
+      {content_lines_before, content_lines_after} = Enum.split(content_lines, index + 1)
+
+      [content_lines_before, [injection.content], content_lines_after]
+      |> Enum.concat()
+      |> Enum.join("\n")
+    end)
+  end
+
+  defp previous_line_until_before_comments(content_lines, index) do
+    case Enum.at(content_lines, index) do
+      nil -> Mix.raise("Invalid line")
+      "#" <> _string -> previous_line_until_before_comments(content_lines, index - 1)
+      _string -> index
     end
   end
 end

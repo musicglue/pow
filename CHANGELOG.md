@@ -1,14 +1,60 @@
 # Changelog
 
-## v1.0.25 (TBA)
+## v1.0.28 (TBA)
+
+### Enhancements
+
+* [`Mix.Pow`] `Mix.Pow.parse_options/3` now merges option defaults with `:otp_app, :generators` configuration
+* [`Mix.Pow.Mix.Tasks.Pow.Phoenix.Mailer.Gen.Templates`] Now injects `config/config.exs` and `WEB_PATH/WEB_APP.ex`
+* [`Mix.Pow.Mix.Tasks.Pow.Phoenix.Gen.Templates`] Now injects `config/config.exs`
+* [`Mix.Tasks.Pow.Phoenix.Install`] Now injects `config/config.exs`, `WEB_PATH/endpoint.ex`, and `WEB_PATH/router.ex`
+* [`Phoenix.Router.Route`] Updated to support Phoenix 1.7 breaking changes
+
+### Documentation
+
+* Updated [api guide](guides/api.md) to correctly return updated `conn` for delete calls
+
+## v1.0.27 (2022-04-27)
+
+Now supports `ecto_sql` 3.8.x and requires Elixir 1.11+.
+
+### Enhancements
+
+* [`Pow.Ecto.Schema`] has been refactored to conform the `@pow_fields` and `@pow_assocs` attributes with separate migration options
+
+## v1.0.26 (2021-11-06)
+
+### Enhancemnets
+
+* [`Pow.Store.Backend.MnesiaCache.Unsplit`] The unsplit module will now initialize the Mnesia cluster when nodes are connected lazily by resetting the Mnesia schema
+
+### Bug fixes
+
+* [`Pow.Store.Backend.MnesiaCache`] Now properly handles Mnesia application start errors
+
+### Documentation
+
+* Updated [api guide](guides/api.md) to use `Plug.Conn.register_before_send/2` for token writes
+
+## v1.0.25 (2021-09-26)
+
+Now supports Phoenix 1.6.x, and `phoenix_html` 3.x.x.
 
 ### Enhancements
 
 * [`Pow.Ecto.Schema.Fields`] The `:password_hash`, `:current_password`, and `:password` fields now have `redact: true` option set
+* [`Pow.Phoenix.Controller`] `Pow.Phoenix.Controller.action/3` now properly handles `{:halt, conn}` returned in the `before_process` callback
+* [`Pow.Store.Backend.EtsCache`] Now does synchronous writes unless `writes: :async` is passed in config options
+* [`Pow.Store.Backend.MnesiaCache`] Now does synchronous writes unless `writes: :async` is passed in config options
 
 ### Bug fixes
 
 * [`Pow.Operations`] `Pow.Operations.fetch_primary_key_values/2` now ensures that module exists and is loaded before deriving primary keys
+
+### Documentation
+
+* Updated [redis guide](guides/redis_cache_store_backend.md) to use synchronous writes unless `writes: :async` is passed in config options
+* Updated [redis guide](guides/redis_cache_store_backend.md) to use optimized lookups with sorted keys
 
 ## v1.0.24 (2021-05-27)
 

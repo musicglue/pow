@@ -49,7 +49,7 @@ defmodule Pow.Store.Backend.MnesiaCache do
 
   ## Usage
 
-  To start the GenServer, add it to your application `start/2` method:
+  To start the GenServer, add it to your application `start/2` function:
 
       defmodule MyApp.Application do
         use Application
@@ -60,7 +60,7 @@ defmodule Pow.Store.Backend.MnesiaCache do
             MyAppWeb.Endpoint,
             Pow.Store.Backend.MnesiaCache
             # # Or in a distributed system:
-            # {Pow.Store.Backend.MnesiaCache, extra_db_nodes: {Node, :list, []},
+            # {Pow.Store.Backend.MnesiaCache, extra_db_nodes: {Node, :list, []}},
             # Pow.Store.Backend.MnesiaCache.Unsplit # Recover from netsplit
           ]
 
@@ -90,6 +90,9 @@ defmodule Pow.Store.Backend.MnesiaCache do
 
     * `:namespace` - string value to use for namespacing keys, defaults to
       "cache".
+
+    * `:writes` - set to `:async` to do asynchronous writes. Defaults to
+      `:sync`.
   """
   use GenServer
   alias Pow.{Config, Store.Backend.Base}
@@ -114,12 +117,26 @@ defmodule Pow.Store.Backend.MnesiaCache do
   def put(config, record_or_records) do
     ttl = ttl!(config)
 
-    GenServer.cast(__MODULE__, {:cache, config, record_or_records, ttl})
+    case Config.get(config, :writes, :sync) do
+      :sync ->
+        records = table_insert(record_or_records, ttl, config)
+        GenServer.cast(__MODULE__, {:append_validators, config, records, ttl})
+
+      :async ->
+        GenServer.cast(__MODULE__, {:cache, config, record_or_records, ttl})
+    end
   end
 
   @impl Base
   def delete(config, key) do
-    GenServer.cast(__MODULE__, {:delete, config, key})
+    case Config.get(config, :writes, :sync) do
+      :sync ->
+        key = table_delete(key, config)
+        GenServer.cast(__MODULE__, {:clear_invalidator, config, key})
+
+      :async ->
+        GenServer.cast(__MODULE__, {:delete, config, key})
+    end
   end
 
   @impl Base
@@ -135,7 +152,6 @@ defmodule Pow.Store.Backend.MnesiaCache do
   # Callbacks
 
   @impl GenServer
-  @spec init(Base.config()) :: {:ok, map()} | {:stop, any()}
   def init(config) do
     case init_mnesia(config) do
       :ok ->
@@ -147,12 +163,9 @@ defmodule Pow.Store.Backend.MnesiaCache do
   end
 
   @impl GenServer
-  @spec handle_cast({:cache, Base.config(), Base.record() | [Base.record()], integer()}, map()) :: {:noreply, map()}
-  def handle_cast({:cache, config, record_or_records, ttl}, %{invalidators: invalidators} = state) do
+  def handle_cast({:append_validators, config, records, ttl}, %{invalidators: invalidators} = state) do
     invalidators =
-      record_or_records
-      |> table_insert(ttl, config)
-      |> Enum.reduce(invalidators, fn {key, _}, invalidators ->
+      Enum.reduce(records, invalidators, fn {key, _}, invalidators ->
         append_invalidator(key, invalidators, ttl, config)
       end)
 
@@ -161,23 +174,29 @@ defmodule Pow.Store.Backend.MnesiaCache do
     {:noreply, %{state | invalidators: invalidators}}
   end
 
-  @spec handle_cast({:delete, Base.config(), Base.key() | [Base.key()]}, map()) :: {:noreply, map()}
-  def handle_cast({:delete, config, key}, %{invalidators: invalidators} = state) do
-    invalidators =
-      key
-      |> table_delete(config)
-      |> clear_invalidator(invalidators)
+  def handle_cast({:cache, config, record_or_records, ttl}, state) do
+    records = table_insert(record_or_records, ttl, config)
+
+    handle_cast({:append_validators, config, records, ttl}, state)
+  end
+
+  def handle_cast({:clear_invalidator, _config, key}, %{invalidators: invalidators} = state) do
+    invalidators = clear_invalidator(key, invalidators)
 
     {:noreply, %{state | invalidators: invalidators}}
   end
 
-  @spec handle_cast({:refresh_invalidators, Base.config()}, map()) :: {:noreply, map()}
+  def handle_cast({:delete, config, key}, state) do
+    key = table_delete(key, config)
+
+    handle_cast({:clear_invalidator, config, key}, state)
+  end
+
   def handle_cast({:refresh_invalidators, config}, %{invalidators: invalidators} = state) do
     {:noreply, %{state | invalidators: init_invalidators(config, invalidators)}}
   end
 
   @impl GenServer
-  @spec handle_info({:invalidate, Base.config(), [Base.key()]}, map()) :: {:noreply, map()}
   def handle_info({:invalidate, config, key}, %{invalidators: invalidators} = state) do
     invalidators = delete_or_reschedule(key, invalidators, config)
 
@@ -304,9 +323,9 @@ defmodule Pow.Store.Backend.MnesiaCache do
         nodes -> nodes
       end
 
-    db_nodes
-    |> Enum.filter(& &1 in visible_nodes)
-    |> Enum.filter(&:rpc.block_call(&1, :mnesia, :system_info, [:is_running]) == :yes)
+    Enum.filter(db_nodes, fn node ->
+      node in visible_nodes and :rpc.block_call(node, :mnesia, :system_info, [:is_running]) == :yes
+    end)
   end
 
   defp init_cluster(config) do
@@ -347,6 +366,7 @@ defmodule Pow.Store.Backend.MnesiaCache do
     case Application.start(:mnesia) do
       {:error, {:already_started, :mnesia}} -> :ok
       :ok                                   -> :ok
+      {:error, error}                       -> {:error, error}
     end
   end
 

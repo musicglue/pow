@@ -12,6 +12,9 @@ defmodule Pow.Store.Backend.EtsCache do
       is not provided, or is set to nil, the records will never expire.
 
     * `:namespace` - value to use for namespacing keys. Defaults to "cache".
+
+    * `:writes` - set to `:async` to do asynchronous writes. Defaults to
+      `:sync`.
   """
   use GenServer
   alias Pow.{Config, Store.Backend.Base}
@@ -26,12 +29,24 @@ defmodule Pow.Store.Backend.EtsCache do
 
   @impl Base
   def put(config, record_or_records) do
-    GenServer.cast(__MODULE__, {:cache, config, record_or_records})
+    case Config.get(config, :writes, :sync) do
+      :sync ->
+        GenServer.call(__MODULE__, {:cache, config, record_or_records})
+
+      :async ->
+        GenServer.cast(__MODULE__, {:cache, config, record_or_records})
+    end
   end
 
   @impl Base
   def delete(config, key) do
-    GenServer.cast(__MODULE__, {:delete, config, key})
+    case Config.get(config, :writes, :sync) do
+      :sync ->
+        GenServer.call(__MODULE__, {:delete, config, key})
+
+      :async ->
+        GenServer.cast(__MODULE__, {:delete, config, key})
+    end
   end
 
   @impl Base
@@ -47,7 +62,6 @@ defmodule Pow.Store.Backend.EtsCache do
   # Callbacks
 
   @impl GenServer
-  @spec init(Base.config()) :: {:ok, map()}
   def init(_config) do
     init_table()
 
@@ -55,7 +69,19 @@ defmodule Pow.Store.Backend.EtsCache do
   end
 
   @impl GenServer
-  @spec handle_cast({:cache, Base.config(), Base.record() | [Base.record()]}, map()) :: {:noreply, map()}
+  def handle_call({:cache, config, record_or_records}, _from, state) do
+    {:noreply, state} = handle_cast({:cache, config, record_or_records}, state)
+
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:delete, config, key}, _from, state) do
+    {:noreply, state} = handle_cast({:delete, config, key}, state)
+
+    {:reply, :ok, state}
+  end
+
+  @impl GenServer
   def handle_cast({:cache, config, record_or_records}, %{invalidators: invalidators} = state) do
     invalidators =
       record_or_records
@@ -65,7 +91,6 @@ defmodule Pow.Store.Backend.EtsCache do
     {:noreply, %{state | invalidators: invalidators}}
   end
 
-  @spec handle_cast({:delete, Base.config(), Base.key()}, map()) :: {:noreply, map()}
   def handle_cast({:delete, config, key}, %{invalidators: invalidators} = state) do
     invalidators =
       key
@@ -76,7 +101,6 @@ defmodule Pow.Store.Backend.EtsCache do
   end
 
   @impl GenServer
-  @spec handle_info({:invalidate, Base.config(), Base.key()}, map()) :: {:noreply, map()}
   def handle_info({:invalidate, config, key}, %{invalidators: invalidators} = state) do
     invalidators =
       key

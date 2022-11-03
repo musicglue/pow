@@ -1,6 +1,6 @@
 # Multitenancy with Pow
 
-You can pass repo options to the methods used in `Pow.Ecto.Context` by using the `:repo_opts` configuration option. This makes it possible to pass on the prefix option used in multitenancy apps, so you can do the following:
+You can pass repo options to the functions used in `Pow.Ecto.Context` by using the `:repo_opts` configuration option. This makes it possible to pass on the prefix option used in multitenancy apps, so you can do the following:
 
 ```elixir
 config :my_app, :pow,
@@ -231,7 +231,7 @@ defmodule MyAppWeb.Pow.TriplexSessionPlugTest do
     :get
     |> Plug.Test.conn("/")
     |> Plug.Test.init_test_session(%{})
-    |> Phoenix.Controller.fetch_flash()
+    |> fetch_flash()
   end
 
   defp set_triplex_tenant(conn, tenant) do
@@ -311,7 +311,7 @@ defmodule MyAppWeb.AccountControllerTest do
     test "with valid params", %{conn: conn} do
       conn = post(conn, Routes.account_path(conn, :create, @valid_params))
 
-      assert get_flash(conn, :info) == "Welcome!"
+      assert Phoenix.Flash.get(conn.assigns.flash, :info) == "Welcome!"
       assert redirected_to(conn) == Routes.page_path(conn, :index)
 
       assert Pow.Plug.current_user(conn)

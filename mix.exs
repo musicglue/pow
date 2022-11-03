@@ -1,13 +1,13 @@
 defmodule Pow.MixProject do
   use Mix.Project
 
-  @version "1.0.24"
+  @version "1.0.27"
 
   def project do
     [
       app: :pow,
       version: @version,
-      elixir: "~> 1.7",
+      elixir: "~> 1.11",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       compilers: [:phoenix] ++ Mix.compilers(),
@@ -38,7 +38,7 @@ defmodule Pow.MixProject do
       {:phoenix_html, ">= 2.0.0 and < 4.0.0"},
       {:plug, ">= 1.5.0 and < 2.0.0", optional: true},
 
-      {:phoenix_ecto, "~> 4.2", only: [:dev, :test]},
+      {:phoenix_ecto, "~> 4.3", only: [:dev, :test]},
       {:credo, "~> 1.5", only: [:dev, :test]},
       {:jason, "~> 1.2", only: [:dev, :test]}, # Credo requires jason to exist also in :dev
 
@@ -55,9 +55,12 @@ defmodule Pow.MixProject do
 
   defp package do
     [
-      maintainers: ["Dan Shultzer"],
+      maintainers: ["Dan Schultzer"],
       licenses: ["MIT"],
-      links: %{github: "https://github.com/danschultzer/pow"},
+      links: %{
+        "GitHub" => "https://github.com/danschultzer/pow",
+        "Sponsor" => "https://github.com/sponsors/danschultzer"
+      },
       files: ~w(lib LICENSE mix.exs README.md)
     ]
   end

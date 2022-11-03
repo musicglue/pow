@@ -4,7 +4,7 @@ Locking users is trivial, and you won't need an extension for this. It can be do
 
 ## Update your schema
 
-Add a `locked_at` column to your user schema, and a `lock_changeset/1` method to lock the account:
+Add a `locked_at` column to your user schema, and a `lock_changeset/1` function to lock the account:
 
 ```elixir
 # lib/my_app/users/user.ex
@@ -216,7 +216,7 @@ defmodule MyAppWeb.ResetPasswordController do
 end
 ```
 
-To make the code simpler for us we're leveraging the methods from `PowResetPassword.Phoenix.ResetPasswordController` here.
+To make the code simpler for us we're leveraging the functions from `PowResetPassword.Phoenix.ResetPasswordController` here.
 
 Now all we got to do is to catch the route before the `pow_extension_routes/0` call:
 
@@ -282,7 +282,7 @@ defmodule MyAppWeb.Admin.UserControllerTest do
 
       conn = post(conn, Routes.admin_user_path(conn, :lock, user.id))
 
-      assert get_flash(conn, :info) == "User has been locked."
+      assert Phoenix.Flash.get(conn.assigns.flash, :info) == "User has been locked."
       assert redirected_to(conn) == "/"
     end
 
@@ -291,7 +291,7 @@ defmodule MyAppWeb.Admin.UserControllerTest do
 
       conn = post(conn, Routes.admin_user_path(conn, :lock, user.id))
 
-      assert get_flash(conn, :error) == "User couldn't be locked."
+      assert Phoenix.Flash.get(conn.assigns.flash, :error) == "User couldn't be locked."
       assert redirected_to(conn) == "/"
     end
   end
@@ -345,7 +345,7 @@ defmodule MyAppWeb.EnsureUserNotLockedPlugTest do
       |> Pow.Plug.assign_current_user(@locked_user, @pow_config)
       |> EnsureUserNotLockedPlug.call(opts)
 
-    assert get_flash(conn, :error) == "Sorry, your account is locked."
+    assert Phoenix.Flash.get(conn.assigns.flash, :error) == "Sorry, your account is locked."
     assert redirected_to(conn) == Routes.pow_session_path(conn, :new)
   end
 
@@ -356,7 +356,7 @@ defmodule MyAppWeb.EnsureUserNotLockedPlugTest do
     |> Plug.Test.conn("/")
     |> Plug.Test.init_test_session(%{})
     |> Pow.Plug.put_config(pow_config)
-    |> Phoenix.Controller.fetch_flash()
+    |> fetch_flash()
   end
 end
 ```
@@ -377,7 +377,7 @@ defmodule MyAppWeb.ResetPasswordControllerTest do
 
       conn = post(conn, Routes.reset_password_path(conn, :create, @valid_params))
 
-      assert get_flash(conn, :info)
+      assert Phoenix.Flash.get(conn.assigns.flash, :info)
       assert redirected_to(conn) == Routes.pow_session_path(conn, :new)
 
       assert count_reset_password_tokens_for_user(conn, user) == 1
@@ -388,7 +388,7 @@ defmodule MyAppWeb.ResetPasswordControllerTest do
 
       conn = post(conn, Routes.reset_password_path(conn, :create, @valid_params))
 
-      assert get_flash(conn, :info)
+      assert Phoenix.Flash.get(conn.assigns.flash, :info)
       assert redirected_to(conn) == Routes.pow_session_path(conn, :new)
 
       assert count_reset_password_tokens_for_user(conn, user) == 0
@@ -406,8 +406,6 @@ defmodule MyAppWeb.ResetPasswordControllerTest do
       conn
       |> Pow.Plug.fetch_config()
       |> Pow.Config.get(:cache_store_backend, Pow.Store.Backend.EtsCache)
-
-    :timer.sleep(100)
 
     [backend: backend]
     |> ResetTokenCache.all([:_])

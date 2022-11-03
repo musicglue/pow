@@ -4,7 +4,7 @@ defmodule Pow.Extension.Ecto.Schema do
 
   The macro will append fields to the `@pow_fields` module attribute using the
   attributes from `[Pow Extension].Ecto.Schema.attrs/1`, so they can be used in
-  the `Pow.Ecto.Schema.pow_user_fields/0` method call.
+  the `Pow.Ecto.Schema.pow_user_fields/0` function call.
 
   After module compilation `[Pow Extension].Ecto.Schema.validate!/2` will run.
 
@@ -48,7 +48,7 @@ defmodule Pow.Extension.Ecto.Schema do
 
       unquote(__MODULE__).__register_extension_fields__()
       unquote(__MODULE__).__register_extension_assocs__()
-      unquote(__MODULE__).__pow_extension_methods__()
+      unquote(__MODULE__).__pow_extension_functions__()
       unquote(__MODULE__).__register_after_compile_validation__()
     end
   end
@@ -67,8 +67,8 @@ defmodule Pow.Extension.Ecto.Schema do
   @doc false
   defmacro __register_extension_fields__ do
     quote do
-      for attr <- unquote(__MODULE__).attrs(@pow_extension_config) do
-        Module.put_attribute(__MODULE__, :pow_fields, attr)
+      for {name, value, options, _migration_options} <- unquote(__MODULE__).attrs(@pow_extension_config) do
+        Module.put_attribute(__MODULE__, :pow_fields, {name, value, options})
       end
     end
   end
@@ -79,15 +79,15 @@ defmodule Pow.Extension.Ecto.Schema do
       @pow_extension_config
       |> unquote(__MODULE__).assocs()
       |> Enum.map(fn
-        {:belongs_to, name, :users} -> {:belongs_to, name, __MODULE__}
-        {:has_many, name, :users, opts} -> {:has_many, name, __MODULE__, opts}
+        {type, name, :users, field_options, _migration_options} -> {type, name, __MODULE__, field_options}
+        {type, name, module, field_options, _migration_options} -> {type, name, module, field_options}
       end)
       |> Enum.each(&Module.put_attribute(__MODULE__, :pow_assocs, &1))
     end
   end
 
   @doc false
-  defmacro __pow_extension_methods__ do
+  defmacro __pow_extension_functions__ do
     quote do
       def pow_extension_changeset(changeset, attrs) do
         unquote(__MODULE__).changeset(changeset, attrs, @pow_extension_config)
@@ -122,7 +122,12 @@ defmodule Pow.Extension.Ecto.Schema do
 
       Enum.concat(attrs, extension_attrs)
     end)
+    |> Enum.map(&normalize_attr/1)
   end
+
+  defp normalize_attr({name, value}), do: {name, value, [], []}
+  defp normalize_attr({name, value, field_options}), do: {name, value, field_options, []}
+  defp normalize_attr({name, value, field_options, migration_options}), do: {name, value, field_options, migration_options}
 
   @doc """
   Merge all extension associations together to one list.
@@ -140,7 +145,12 @@ defmodule Pow.Extension.Ecto.Schema do
 
       Enum.concat(assocs, extension_assocs)
     end)
+    |> Enum.map(&normalize_assoc/1)
   end
+
+  defp normalize_assoc({type, name, module}), do: {type, name, module, [], []}
+  defp normalize_assoc({type, name, module, field_options}), do: {type, name, module, field_options, []}
+  defp normalize_assoc({type, name, module, field_options, migration_options}), do: {type, name, module, field_options, migration_options}
 
   @doc """
   Merge all extension indexes together to one list.
@@ -180,7 +190,7 @@ defmodule Pow.Extension.Ecto.Schema do
   This will run `validate!/2` on all extension ecto schema modules.
 
   It's used to ensure certain fields are available, e.g. an `:email` field. The
-  method should either raise an exception, or return `:ok`. Compilation will
+  function should either raise an exception, or return `:ok`. Compilation will
   fail when the exception is raised.
   """
   @spec validate!(Config.t(), atom()) :: :ok
